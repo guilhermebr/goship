@@ -540,6 +540,9 @@ func (r *Runtime) GetInstanceStatus(ctx context.Context, instanceID string) (*en
 				info.instance.State = mapLibvirtState(state)
 			}
 			_ = domain.Free()
+		} else if errors.Is(domainErr, libvirt.ERR_NO_DOMAIN) {
+			// Domain no longer exists in libvirt (destroyed externally or host crash).
+			info.instance.State = entities.InstanceStateStopped
 		}
 	}
 

@@ -1,14 +1,17 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/guilhermebr/goship/internal/agent/runtime"
 	"github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 	"github.com/guilhermebr/goship/internal/shared/state"
+	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
 var (
@@ -120,6 +123,25 @@ func needsRuntime(cmd *cobra.Command) bool {
 	return false
 }
 
+// needsRuntimeOptional returns true if the command benefits from the runtime
+// for state reconciliation but should not fail without it (e.g. libvirt down).
+func needsRuntimeOptional(cmd *cobra.Command) bool {
+	parent := ""
+	if cmd.Parent() != nil {
+		parent = cmd.Parent().Name()
+	}
+	name := cmd.Name()
+
+	if parent == "project" {
+		switch name {
+		case "list", "info":
+			return true
+		}
+	}
+
+	return false
+}
+
 // initResources initializes shared resources based on command needs.
 func initResources(cmd *cobra.Command, args []string) error {
 	if !needsStore(cmd) {
@@ -132,7 +154,10 @@ func initResources(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state store: %w", err)
 	}
 
-	if !needsRuntime(cmd) {
+	wantRuntime := needsRuntime(cmd)
+	wantOptional := needsRuntimeOptional(cmd)
+
+	if !wantRuntime && !wantOptional {
 		return nil
 	}
 
@@ -154,10 +179,82 @@ func initResources(cmd *cobra.Command, args []string) error {
 
 	rt, err = libvirt.New(opts...)
 	if err != nil {
-		return fmt.Errorf("failed to initialize libvirt runtime: %w", err)
+		if wantRuntime {
+			return fmt.Errorf("failed to initialize libvirt runtime: %w", err)
+		}
+		// Optional: swallow error, commands will show store data as-is.
+		rt = nil
+		return nil
 	}
 
+	reconcileState()
+
 	return nil
+}
+
+// reconcileState synchronizes the state store with actual libvirt domain states.
+// It checks all projects with active instances and updates their state if libvirt
+// reports a different status (e.g. VM was stopped externally via virsh destroy).
+func reconcileState() {
+	if store == nil || rt == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	projects := store.ListProjects()
+	for _, project := range projects {
+		instance := store.GetInstance(project.ID)
+		if instance == nil {
+			continue
+		}
+
+		// Only reconcile instances in active states that might have drifted.
+		switch instance.State {
+		case entities.InstanceStateRunning, entities.InstanceStateStarting, entities.InstanceStateStopping:
+		default:
+			continue
+		}
+
+		oldState := instance.State
+		rt.LoadInstance(instance)
+
+		status, err := rt.GetInstanceStatus(ctx, instance.ID)
+		if err != nil {
+			continue
+		}
+
+		if status.State == oldState {
+			continue
+		}
+
+		// Instance state drifted — update both instance and project.
+		instance.State = status.State
+		_ = store.UpdateInstance(instance)
+
+		newProjectState := mapInstanceToProjectState(status.State)
+		if newProjectState != project.State {
+			project.State = newProjectState
+			_ = store.UpdateProject(project)
+		}
+	}
+}
+
+// mapInstanceToProjectState derives the project state from an instance state.
+func mapInstanceToProjectState(is entities.InstanceState) entities.ProjectState {
+	switch is {
+	case entities.InstanceStateRunning:
+		return entities.ProjectStateRunning
+	case entities.InstanceStateStopped:
+		return entities.ProjectStateStopped
+	case entities.InstanceStateStopping:
+		return entities.ProjectStateStopping
+	case entities.InstanceStateFailed:
+		return entities.ProjectStateFailed
+	default:
+		return entities.ProjectStatePending
+	}
 }
 
 // cleanupResources cleans up shared resources.

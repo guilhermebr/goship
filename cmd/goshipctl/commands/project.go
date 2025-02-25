@@ -517,17 +517,6 @@ func runProjectEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no VM instance found for project %s", name)
 	}
 
-	// Reconcile state from libvirt in case persisted state is stale.
-	if rt != nil {
-		rt.LoadInstance(instance)
-		if status, err := rt.GetInstanceStatus(ctx, instance.ID); err == nil {
-			if instance.State != status.State {
-				instance.State = status.State
-				_ = store.UpdateInstance(instance)
-			}
-		}
-	}
-
 	// Check VM is stopped.
 	if instance.State != entities.InstanceStateStopped {
 		return fmt.Errorf(
