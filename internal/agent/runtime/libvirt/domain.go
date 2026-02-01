@@ -20,6 +20,7 @@ type DomainConfig struct {
 	Networks      []entities.NetworkDevice
 	Serials       []entities.SerialDevice
 	MemoryBacking *entities.MemoryBacking
+	SecurityNone  bool // Disable libvirt security confinement (seclabel type='none')
 }
 
 // CDROMDevice defines a CDROM device (for cloud-init ISO).
@@ -133,6 +134,9 @@ const domainXMLTemplate = `<domain type='{{if .EnableKVM}}kvm{{else}}qemu{{end}}
       <address type='pci' domain='0x0000' bus='0x00' slot='0x09' function='0x0'/>
     </memballoon>
   </devices>
+{{- if .SecurityNone}}
+  <seclabel type='none'/>
+{{- end}}
 </domain>`
 
 // diskLetter returns the disk letter for the given index (a, b, c, ...).

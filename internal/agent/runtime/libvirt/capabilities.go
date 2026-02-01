@@ -131,7 +131,7 @@ func checkHugepages() (bool, []int64) {
 			sizeStr := strings.TrimPrefix(name, "hugepages-")
 			sizeStr = strings.TrimSuffix(sizeStr, "kB")
 			var size int64
-			fmt.Sscanf(sizeStr, "%d", &size)
+			_, _ = fmt.Sscanf(sizeStr, "%d", &size)
 			if size > 0 {
 				sizes = append(sizes, size)
 			}
