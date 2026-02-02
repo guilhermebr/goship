@@ -36,4 +36,5 @@ func init() {
 	rootCmd.AddCommand(capabilitiesCmd)
 	rootCmd.AddCommand(generateXMLCmd)
 	rootCmd.AddCommand(vmCmd)
+	rootCmd.AddCommand(imageCmd)
 }
