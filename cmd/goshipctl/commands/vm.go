@@ -52,6 +52,8 @@ func init() {
 	vmCreateCmd.Flags().String("network-type", "network", "Network type (network, bridge, user)")
 	vmCreateCmd.Flags().String("network-source", "default", "Network source name")
 	vmCreateCmd.Flags().String("data-dir", "~/.goship", "Data directory for VM disk images")
+	vmCreateCmd.Flags().String("hostname", "", "VM hostname (defaults to VM name)")
+	vmCreateCmd.Flags().String("ssh-key", "", "Path to SSH public key file (e.g. ~/.ssh/id_ed25519.pub)")
 	_ = vmCreateCmd.MarkFlagRequired("name")
 
 	// vm destroy flags
@@ -74,9 +76,22 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 	networkType, _ := cmd.Flags().GetString("network-type")
 	networkSource, _ := cmd.Flags().GetString("network-source")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
+	hostname, _ := cmd.Flags().GetString("hostname")
+	sshKeyPath, _ := cmd.Flags().GetString("ssh-key")
 
 	baseImage = expandPath(baseImage)
 	dataDir = expandPath(dataDir)
+
+	// Read SSH public key file if provided.
+	var sshKey string
+	if sshKeyPath != "" {
+		sshKeyPath = expandPath(sshKeyPath)
+		keyBytes, err := os.ReadFile(sshKeyPath)
+		if err != nil {
+			return fmt.Errorf("failed to read SSH key file %s: %w", sshKeyPath, err)
+		}
+		sshKey = strings.TrimSpace(string(keyBytes))
+	}
 
 	mgr, cleanup, err := libvirtRuntime.NewVMManager(dataDir)
 	if err != nil {
@@ -95,6 +110,8 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 		SecurityNone:  true,
 		NetworkType:   networkType,
 		NetworkSource: networkSource,
+		Hostname:      hostname,
+		SSHKey:        sshKey,
 	})
 	if err != nil {
 		return err

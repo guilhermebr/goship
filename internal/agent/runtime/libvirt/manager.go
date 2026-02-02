@@ -57,6 +57,8 @@ type CreateVMOptions struct {
 	SecurityNone  bool
 	NetworkType   string
 	NetworkSource string
+	Hostname      string // VM hostname (cloud-init)
+	SSHKey        string // SSH public key content (cloud-init)
 }
 
 // DestroyResult holds the outcome of a Destroy operation.
@@ -129,6 +131,25 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 		return nil, fmt.Errorf("failed to generate UUID: %w", err)
 	}
 
+	// Generate cloud-init ISO if hostname or SSH key provided.
+	var cdroms []CDROMDevice
+	if opts.Hostname != "" || opts.SSHKey != "" {
+		isoPath := filepath.Join(dir, "cloud-init.iso")
+		hostname := opts.Hostname
+		if hostname == "" {
+			hostname = opts.Name
+		}
+		err := GenerateCloudInitISO(&CloudInitConfig{
+			InstanceID: uuid,
+			Hostname:   hostname,
+			SSHKey:     opts.SSHKey,
+		}, isoPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cloud-init ISO: %w", err)
+		}
+		cdroms = append(cdroms, CDROMDevice{Path: isoPath, Format: "raw"})
+	}
+
 	// Build domain config.
 	dName := domainName(opts.Name)
 	config := &DomainConfig{
@@ -149,6 +170,7 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 				Bus:    "virtio",
 			},
 		},
+		CDROMs: cdroms,
 		Networks: []entities.NetworkDevice{
 			{
 				Type:   opts.NetworkType,

@@ -87,6 +87,7 @@ The **[Design Document (RFC)](docs/DESIGN.md)** is the authoritative reference f
 - Go 1.24+
 - `libvirt-dev` / `libvirt-devel`
 - `qemu-system-x86_64`, `qemu-img`
+- `genisoimage` or `mkisofs` (for cloud-init ISO generation)
 - KVM-capable host (for `--enable-kvm`)
 
 ### Build
@@ -110,8 +111,8 @@ goshipctl generate-xml --name my-vm --memory 1024 --cpus 2
 # Download the Alpine base VM image
 goshipctl image pull
 
-# Create and start a VM
-goshipctl vm create --name my-vm
+# Create and start a VM (with cloud-init provisioning)
+goshipctl vm create --name my-vm --ssh-key ~/.ssh/id_ed25519.pub
 
 # List VMs
 goshipctl vm list
@@ -171,6 +172,8 @@ Creates a CoW disk image from a base image, generates domain XML, and starts the
 | `--network-type` | `network` | Network type |
 | `--network-source` | `default` | Network source name |
 | `--data-dir` | `~/.goship` | Data directory for VM disk images |
+| `--hostname` | *(VM name)* | VM hostname (cloud-init) |
+| `--ssh-key` | | Path to SSH public key file (e.g. `~/.ssh/id_ed25519.pub`) |
 
 ### `goshipctl vm destroy [flags]`
 
