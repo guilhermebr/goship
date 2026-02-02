@@ -175,6 +175,26 @@ Creates a CoW disk image from a base image, generates domain XML, and starts the
 | `--hostname` | *(VM name)* | VM hostname (cloud-init) |
 | `--ssh-key` | | Path to SSH public key file (e.g. `~/.ssh/id_ed25519.pub`) |
 
+#### Cloud-Init Provisioning
+
+When a VM is created with `--ssh-key`, GoShip generates a NoCloud cloud-init ISO that provisions the VM on first boot:
+
+- **User:** `goship` (shell: `/bin/sh`, sudo: passwordless)
+- **Password:** `goship` (for console access via `virsh console`)
+- **SSH:** Key-based auth using the provided public key
+- **Hostname:** Set to `--hostname` flag value (defaults to VM name)
+
+To access the VM:
+
+```bash
+# Via SSH (recommended)
+ssh goship@<vm-ip>
+
+# Via console (useful for debugging)
+virsh console <vm-name>
+# login: goship / password: goship
+```
+
 ### `goshipctl vm destroy [flags]`
 
 Stops the VM, undefines it from libvirt, and removes its disk image.
