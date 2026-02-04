@@ -276,6 +276,73 @@ func TestGenerateDomainXML_WithCDROM(t *testing.T) {
 	}
 }
 
+func TestGenerateDomainXML_DACSecLabel(t *testing.T) {
+	baseConfig := func() *DomainConfig {
+		return &DomainConfig{
+			Name:      "dac-vm",
+			UUID:      "66666666-6666-6666-6666-666666666666",
+			MemoryMB:  512,
+			EnableKVM: true,
+			CPU: entities.CPUTopology{
+				Sockets: 1,
+				Cores:   1,
+				Threads: 1,
+			},
+			Disks: []entities.DiskDevice{
+				{Path: "/disk.qcow2", Format: "qcow2", Bus: "virtio"},
+			},
+		}
+	}
+
+	t.Run("DACLabel set renders DAC seclabel", func(t *testing.T) {
+		config := baseConfig()
+		config.DACLabel = "+0:+0"
+
+		xml, err := GenerateDomainXML(config)
+		if err != nil {
+			t.Fatalf("GenerateDomainXML failed: %v", err)
+		}
+
+		if !strings.Contains(xml, "<seclabel type='static' model='dac' relabel='no'>") {
+			t.Error("expected DAC seclabel element")
+		}
+		if !strings.Contains(xml, "<label>+0:+0</label>") {
+			t.Error("expected DAC label +0:+0")
+		}
+	})
+
+	t.Run("DACLabel empty renders no DAC seclabel", func(t *testing.T) {
+		config := baseConfig()
+
+		xml, err := GenerateDomainXML(config)
+		if err != nil {
+			t.Fatalf("GenerateDomainXML failed: %v", err)
+		}
+
+		if strings.Contains(xml, "model='dac'") {
+			t.Error("unexpected DAC seclabel when DACLabel is empty")
+		}
+	})
+
+	t.Run("SecurityNone takes priority over DACLabel", func(t *testing.T) {
+		config := baseConfig()
+		config.DACLabel = "+1000:+1000"
+		config.SecurityNone = true
+
+		xml, err := GenerateDomainXML(config)
+		if err != nil {
+			t.Fatalf("GenerateDomainXML failed: %v", err)
+		}
+
+		if !strings.Contains(xml, "<seclabel type='none'/>") {
+			t.Error("expected SecurityNone seclabel")
+		}
+		if strings.Contains(xml, "model='dac'") {
+			t.Error("DAC seclabel should not be emitted when SecurityNone is true")
+		}
+	})
+}
+
 func TestDiskLetter(t *testing.T) {
 	tests := []struct {
 		index    int

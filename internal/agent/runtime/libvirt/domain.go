@@ -20,7 +20,8 @@ type DomainConfig struct {
 	Networks      []entities.NetworkDevice
 	Serials       []entities.SerialDevice
 	MemoryBacking *entities.MemoryBacking
-	SecurityNone  bool // Disable libvirt security confinement (seclabel type='none')
+	SecurityNone  bool   // Disable libvirt security confinement (seclabel type='none')
+	DACLabel      string // DAC user:group label (e.g. "+0:+0" for root)
 }
 
 // CDROMDevice defines a CDROM device (for cloud-init ISO).
@@ -136,6 +137,10 @@ const domainXMLTemplate = `<domain type='{{if .EnableKVM}}kvm{{else}}qemu{{end}}
   </devices>
 {{- if .SecurityNone}}
   <seclabel type='none'/>
+{{- else if .DACLabel}}
+  <seclabel type='static' model='dac' relabel='no'>
+    <label>{{.DACLabel}}</label>
+  </seclabel>
 {{- end}}
 </domain>`
 

@@ -15,19 +15,30 @@ import (
 const (
 	// DomainPrefix is the naming prefix for all GoShip-managed libvirt domains.
 	DomainPrefix = "goship-"
-
-	// defaultURI is the default libvirt connection URI.
-	// TODO: accept URI as a parameter to support remote libvirt connections.
-	defaultURI = "qemu:///system"
 )
 
 // connectToLibvirt opens a connection to the local libvirt daemon.
+// It tries qemu:///system first (works for root and users with libvirt
+// group membership or polkit rules). For non-root users, if the system
+// connection fails it falls back to qemu:///session.
 func connectToLibvirt() (*libvirt.Connect, error) {
-	conn, err := libvirt.NewConnect(defaultURI)
-	if err != nil {
-		return nil, fmt.Errorf("cannot connect to libvirt: %w", err)
+	conn, err := libvirt.NewConnect("qemu:///system")
+	if err == nil {
+		return conn, nil
 	}
-	return conn, nil
+
+	if os.Getuid() != 0 {
+		conn, err = libvirt.NewConnect("qemu:///session")
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "WARNING: Could not connect to qemu:///system (permission denied).\n")
+			fmt.Fprintf(os.Stderr, "  Using qemu:///session instead (per-user, limited features).\n")
+			fmt.Fprintf(os.Stderr, "  To fix: add your user to the 'libvirt' group:\n")
+			fmt.Fprintf(os.Stderr, "    sudo usermod -aG libvirt $USER && newgrp libvirt\n\n")
+			return conn, nil
+		}
+	}
+
+	return nil, fmt.Errorf("cannot connect to libvirt: %w", err)
 }
 
 // VMManager owns a libvirt connection and a data directory,
@@ -158,6 +169,7 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 		MemoryMB:     opts.MemoryMB,
 		EnableKVM:    opts.EnableKVM,
 		SecurityNone: opts.SecurityNone,
+		DACLabel:     fmt.Sprintf("+%d:+%d", os.Getuid(), os.Getgid()),
 		CPU: entities.CPUTopology{
 			Sockets: 1,
 			Cores:   opts.CPUs,
@@ -176,6 +188,13 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 				Type:   opts.NetworkType,
 				Source: opts.NetworkSource,
 				Model:  "virtio",
+			},
+		},
+		Serials: []entities.SerialDevice{
+			{
+				Type:       "virtio-serial",
+				SocketPath: filepath.Join(dir, "goship.sock"),
+				PortName:   "goship.0",
 			},
 		},
 	}
