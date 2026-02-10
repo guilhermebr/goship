@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -60,16 +61,19 @@ func NewVMManager(dataDir string) (*VMManager, func(), error) {
 
 // CreateVMOptions holds the parameters for creating a new VM.
 type CreateVMOptions struct {
-	Name          string
-	BaseImage     string
-	MemoryMB      int64
-	CPUs          int
-	EnableKVM     bool
-	SecurityNone  bool
-	NetworkType   string
-	NetworkSource string
-	Hostname      string // VM hostname (cloud-init)
-	SSHKey        string // SSH public key content (cloud-init)
+	Name           string
+	BaseImage      string
+	MemoryMB       int64
+	CPUs           int
+	EnableKVM      bool
+	SecurityNone   bool
+	NetworkType    string
+	NetworkSource  string
+	Hostname       string // VM hostname (cloud-init)
+	SSHKey         string // SSH public key content (cloud-init)
+	InitBinaryPath string
+	ProvisionGuest bool
+	InstallDocker  bool
 }
 
 // DestroyResult holds the outcome of a Destroy operation.
@@ -122,6 +126,9 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create VM directory: %w", err)
 	}
+	if err := sanitizeVMDirACL(dir); err != nil {
+		return nil, fmt.Errorf("failed to sanitize VM directory ACLs: %w", err)
+	}
 
 	success := false
 	defer func() {
@@ -134,6 +141,16 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 	disk := diskPath(m.dataDir, opts.Name)
 	if err := CreateDiskImage(opts.BaseImage, disk); err != nil {
 		return nil, fmt.Errorf("failed to create disk image: %w", err)
+	}
+
+	if opts.ProvisionGuest {
+		if err := ProvisionGuestDisk(GuestProvisionOptions{
+			DiskPath:       disk,
+			InitBinaryPath: opts.InitBinaryPath,
+			InstallDocker:  opts.InstallDocker,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to provision guest disk: %w", err)
+		}
 	}
 
 	// Generate UUID.
@@ -301,4 +318,30 @@ func GenerateUUID() (string, error) {
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16]), nil
+}
+
+// sanitizeVMDirACL removes inherited ACL entries that may strip write access
+// from libvirt-created sockets. This is best-effort and only runs when setfacl
+// is available on the host.
+func sanitizeVMDirACL(dir string) error {
+	if _, err := exec.LookPath("setfacl"); err != nil {
+		return nil
+	}
+
+	commands := [][]string{
+		{"-b", dir}, // remove access ACL entries
+		{"-k", dir}, // remove default ACL entries
+	}
+	for _, args := range commands {
+		cmd := exec.Command("setfacl", args...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("setfacl %s failed: %w\n%s", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+	return nil
 }
