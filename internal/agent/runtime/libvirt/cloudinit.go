@@ -41,7 +41,7 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 	userData := "#cloud-config\n"
 	userData += fmt.Sprintf("hostname: %s\n", config.Hostname)
 	userData += "users:\n"
-	//userData += "  - default\n"
+	userData += "  - default\n"
 	userData += "  - name: goship\n"
 	userData += "    shell: /bin/sh\n"
 	userData += "    groups: wheel\n"
@@ -51,8 +51,8 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 	if config.SSHKey != "" {
 		userData += "    ssh_authorized_keys:\n"
 		userData += fmt.Sprintf("      - %s\n", config.SSHKey)
-		//		userData += "ssh_authorized_keys:\n"
-		//		userData += fmt.Sprintf("  - %s\n", config.SSHKey)
+		userData += "ssh_authorized_keys:\n"
+		userData += fmt.Sprintf("  - %s\n", config.SSHKey)
 	}
 	userDataPath := filepath.Join(tmpDir, "user-data")
 	if err := os.WriteFile(userDataPath, []byte(userData), 0644); err != nil {
