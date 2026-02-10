@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,17 +22,19 @@ var vmCmd = &cobra.Command{
 
 // vmCreateCmd creates a new VM.
 var vmCreateCmd = &cobra.Command{
-	Use:   "create",
+	Use:   "create <name>",
 	Short: "Create and start a VM",
 	Long:  `Creates a CoW disk image, generates domain XML, defines and starts a VM via libvirt.`,
+	Args:  cobra.ExactArgs(1),
 	RunE:  runVMCreate,
 }
 
 // vmDestroyCmd destroys an existing VM.
 var vmDestroyCmd = &cobra.Command{
-	Use:   "destroy",
+	Use:   "destroy <name>",
 	Short: "Destroy a VM",
 	Long:  `Stops a running VM, undefines it from libvirt, and optionally removes its disk image.`,
+	Args:  cobra.ExactArgs(1),
 	RunE:  runVMDestroy,
 }
 
@@ -42,9 +46,17 @@ var vmListCmd = &cobra.Command{
 	RunE:  runVMList,
 }
 
+// vmPingCmd sends a ping to the goship-init agent inside a VM.
+var vmPingCmd = &cobra.Command{
+	Use:   "ping <name>",
+	Short: "Ping the goship-init agent inside a VM",
+	Long:  `Connects to the VM's virtio-serial socket and sends a ping command to verify the goship-init agent is running.`,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runVMPing,
+}
+
 func init() {
 	// vm create flags
-	vmCreateCmd.Flags().String("name", "", "VM name (required)")
 	vmCreateCmd.Flags().String("base-image", "~/.goship/images/goship-vm.qcow2", "Base qcow2 image path")
 	vmCreateCmd.Flags().Int64("memory", 512, "Memory in MB")
 	vmCreateCmd.Flags().Int("cpus", 1, "Number of CPU cores")
@@ -54,21 +66,25 @@ func init() {
 	vmCreateCmd.Flags().String("data-dir", "~/.goship", "Data directory for VM disk images")
 	vmCreateCmd.Flags().String("hostname", "", "VM hostname (defaults to VM name)")
 	vmCreateCmd.Flags().String("ssh-key", "", "Path to SSH public key file (e.g. ~/.ssh/id_ed25519.pub)")
-	_ = vmCreateCmd.MarkFlagRequired("name")
+	vmCreateCmd.Flags().String("goship-init", "./bin/goship-init", "Path to goship-init binary for per-VM guest provisioning")
+	vmCreateCmd.Flags().Bool("skip-guest-provision", false, "Skip guest disk provisioning (goship-init/OpenRC)")
+	vmCreateCmd.Flags().Bool("install-docker", true, "Install and enable Docker during guest provisioning")
 
 	// vm destroy flags
-	vmDestroyCmd.Flags().String("name", "", "VM name (required)")
 	vmDestroyCmd.Flags().String("data-dir", "~/.goship", "Data directory for VM disk images")
 	vmDestroyCmd.Flags().Bool("keep-disk", false, "Keep disk image after destroying VM")
-	_ = vmDestroyCmd.MarkFlagRequired("name")
+
+	// vm ping flags
+	vmPingCmd.Flags().String("data-dir", "~/.goship", "Data directory for VM disk images")
 
 	vmCmd.AddCommand(vmCreateCmd)
 	vmCmd.AddCommand(vmDestroyCmd)
 	vmCmd.AddCommand(vmListCmd)
+	vmCmd.AddCommand(vmPingCmd)
 }
 
 func runVMCreate(cmd *cobra.Command, args []string) error {
-	name, _ := cmd.Flags().GetString("name")
+	name := args[0]
 	baseImage, _ := cmd.Flags().GetString("base-image")
 	memory, _ := cmd.Flags().GetInt64("memory")
 	cpus, _ := cmd.Flags().GetInt("cpus")
@@ -78,9 +94,19 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	hostname, _ := cmd.Flags().GetString("hostname")
 	sshKeyPath, _ := cmd.Flags().GetString("ssh-key")
+	initBinaryPath, _ := cmd.Flags().GetString("goship-init")
+	skipGuestProvision, _ := cmd.Flags().GetBool("skip-guest-provision")
+	installDocker, _ := cmd.Flags().GetBool("install-docker")
 
 	baseImage = expandPath(baseImage)
 	dataDir = expandPath(dataDir)
+	initBinaryPath = expandPath(initBinaryPath)
+
+	if !skipGuestProvision {
+		if _, err := os.Stat(initBinaryPath); os.IsNotExist(err) {
+			return fmt.Errorf("goship-init binary not found: %s\n  Run 'make build-goship-init' first or pass --skip-guest-provision", initBinaryPath)
+		}
+	}
 
 	// Read SSH public key file if provided.
 	var sshKey string
@@ -102,16 +128,19 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "Creating VM %q...\n", name)
 
 	info, err := mgr.Create(libvirtRuntime.CreateVMOptions{
-		Name:          name,
-		BaseImage:     baseImage,
-		MemoryMB:      memory,
-		CPUs:          cpus,
-		EnableKVM:     enableKVM,
-		SecurityNone:  true,
-		NetworkType:   networkType,
-		NetworkSource: networkSource,
-		Hostname:      hostname,
-		SSHKey:        sshKey,
+		Name:           name,
+		BaseImage:      baseImage,
+		MemoryMB:       memory,
+		CPUs:           cpus,
+		EnableKVM:      enableKVM,
+		SecurityNone:   true,
+		NetworkType:    networkType,
+		NetworkSource:  networkSource,
+		Hostname:       hostname,
+		SSHKey:         sshKey,
+		InitBinaryPath: initBinaryPath,
+		ProvisionGuest: !skipGuestProvision,
+		InstallDocker:  installDocker,
 	})
 	if err != nil {
 		return err
@@ -128,7 +157,7 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runVMDestroy(cmd *cobra.Command, args []string) error {
-	name, _ := cmd.Flags().GetString("name")
+	name := args[0]
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	keepDisk, _ := cmd.Flags().GetBool("keep-disk")
 
@@ -167,8 +196,8 @@ func runVMList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "%-30s  %s\n", "NAME", "STATE")
-	fmt.Fprintf(cmd.OutOrStdout(), "%-30s  %s\n", strings.Repeat("-", 30), strings.Repeat("-", 15))
+	fmt.Fprintf(cmd.OutOrStdout(), "%-20s  %-30s  %s\n", "NAME", "MACHINE", "STATE")
+	fmt.Fprintf(cmd.OutOrStdout(), "%-20s  %-30s  %s\n", strings.Repeat("-", 20), strings.Repeat("-", 30), strings.Repeat("-", 15))
 
 	if len(vms) == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "No GoShip VMs found.\n")
@@ -176,9 +205,35 @@ func runVMList(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, vm := range vms {
-		fmt.Fprintf(cmd.OutOrStdout(), "%-30s  %s\n", vm.Domain, vm.State)
+		fmt.Fprintf(cmd.OutOrStdout(), "%-20s  %-30s  %s\n", vm.Name, vm.Domain, vm.State)
 	}
 
+	return nil
+}
+
+func runVMPing(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+	dataDir = expandPath(dataDir)
+
+	socketPath := filepath.Join(dataDir, "vms", name, "goship.sock")
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Pinging goship-init in VM %q...\n", name)
+
+	comm, err := libvirtRuntime.NewVMCommunicator(socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to VM %q: %w", name, err)
+	}
+	defer comm.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := comm.Ping(ctx); err != nil {
+		return fmt.Errorf("ping failed for VM %q: %w", name, err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "VM %q is alive (pong received)\n", name)
 	return nil
 }
 
