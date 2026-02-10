@@ -111,8 +111,14 @@ goshipctl generate-xml --name my-vm --memory 1024 --cpus 2
 # Download the Alpine base VM image
 goshipctl image pull
 
-# Create and start a VM (with cloud-init provisioning)
-goshipctl vm create --name my-vm --ssh-key ~/.ssh/id_ed25519.pub
+# Or build a local plain base image (download + resize only)
+goshipctl image build
+
+# Build goship-init (in-guest agent)
+make build-goship-init
+
+# Create and start a VM (cloud-init + per-VM guest provisioning)
+goshipctl vm create my-vm --ssh-key ~/.ssh/id_ed25519.pub --goship-init ./bin/goship-init
 
 # List VMs
 goshipctl vm list
@@ -151,16 +157,26 @@ Generates a libvirt domain XML document. Does not require a libvirt connection.
 
 ### `goshipctl image pull [flags]`
 
-Downloads the Alpine Linux nocloud QCOW2 image for use as the base VM image.
+Downloads the Alpine Linux NoCloud QCOW2 image for use as the base VM image.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--output` | `~/.goship/images/goship-vm.qcow2` | Output path for the downloaded image |
 | `--force` | `false` | Overwrite existing image |
 
+### `goshipctl image build [flags]`
+
+Builds a plain base image locally (download + resize). It does not install goship-init.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output` | `~/.goship/images/goship-vm.qcow2` | Output path for the built image |
+| `--force` | `false` | Overwrite existing image |
+| `--image-size` | `2G` | Resize image virtual size |
+
 ### `goshipctl vm create [flags]`
 
-Creates a CoW disk image from a base image, generates domain XML, and starts the VM via libvirt.
+Creates a CoW disk image from a base image, provisions goship-init in that overlay, generates domain XML, and starts the VM via libvirt.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -174,6 +190,9 @@ Creates a CoW disk image from a base image, generates domain XML, and starts the
 | `--data-dir` | `~/.goship` | Data directory for VM disk images |
 | `--hostname` | *(VM name)* | VM hostname (cloud-init) |
 | `--ssh-key` | | Path to SSH public key file (e.g. `~/.ssh/id_ed25519.pub`) |
+| `--goship-init` | `./bin/goship-init` | Path to goship-init binary used for per-VM provisioning |
+| `--skip-guest-provision` | `false` | Skip goship-init/OpenRC guest provisioning |
+| `--install-docker` | `true` | Install/enable Docker during guest provisioning |
 
 #### Cloud-Init Provisioning
 
