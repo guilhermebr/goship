@@ -1,7 +1,7 @@
 # GoShip Makefile
 
 .PHONY: all build clean test lint fmt vet tidy help
-.PHONY: build-goshipctl
+.PHONY: build-goshipctl build-goship-init
 
 # Go parameters
 GOCMD=go
@@ -14,6 +14,7 @@ GOVET=$(GOCMD) vet
 
 # Binary names
 GOSHIPCTL=goshipctl
+GOSHIP_INIT=goship-init
 
 # Build directories
 BUILD_DIR=bin
@@ -30,13 +31,19 @@ LDFLAGS := -ldflags "$(LD_VERSION_FLAGS)"
 all: build
 
 # Build all binaries
-build: build-goshipctl
+build: build-goshipctl build-goship-init
 
 # Build goshipctl CLI
 build-goshipctl:
 	@echo "Building $(GOSHIPCTL)..."
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(GOSHIPCTL) ./$(CMD_DIR)/$(GOSHIPCTL)
+
+# Build goship-init (static binary for use inside VMs)
+build-goship-init:
+	@echo "Building $(GOSHIP_INIT) (static)..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(GOSHIP_INIT) ./$(CMD_DIR)/$(GOSHIP_INIT)
 
 # Run tests
 test:
@@ -83,6 +90,7 @@ help:
 	@echo "  all              - Build all binaries (default)"
 	@echo "  build            - Build all binaries"
 	@echo "  build-goshipctl  - Build goshipctl CLI"
+	@echo "  build-goship-init - Build goship-init (static, for VMs)"
 	@echo "  test             - Run tests"
 	@echo "  test-coverage    - Run tests with coverage"
 	@echo "  fmt              - Format code"
