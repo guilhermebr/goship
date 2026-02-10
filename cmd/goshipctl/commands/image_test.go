@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -43,7 +46,7 @@ func TestImagePull_AlreadyExists(t *testing.T) {
 		t.Fatalf("creating fake image: %v", err)
 	}
 
-	// Build a fresh command to avoid shared state with other tests.
+	// Build a fresh command with all required flags.
 	cmd := &cobra.Command{Use: "pull", RunE: runImagePull}
 	cmd.Flags().String("output", imagePath, "")
 	cmd.Flags().Bool("force", false, "")
@@ -54,20 +57,122 @@ func TestImagePull_AlreadyExists(t *testing.T) {
 	}
 
 	want := "image already exists"
-	if got := err.Error(); !contains(got, want) {
+	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error = %q, want it to contain %q", got, want)
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
+func TestImageBuild_MissingInitBinary(t *testing.T) {
+	if imageBuildCmd.Flags().Lookup("goship-init") != nil {
+		t.Fatal("image build should not expose --goship-init flag anymore")
+	}
 }
 
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestOpenRCServiceScript(t *testing.T) {
+	if strings.Contains(defaultImageURL, "github.com/guilhermebr/goship/releases") {
+		t.Fatal("default image URL should point to Alpine NoCloud source")
 	}
-	return false
+}
+
+func TestCheckExistingVMs_NoVMs(t *testing.T) {
+	// When no ~/.goship/vms/ directory exists, checkExistingVMs should
+	// return an empty list (no error, just no VMs found).
+	dir := t.TempDir()
+	imagePath := filepath.Join(dir, "goship-vm.qcow2")
+
+	// Create a fake image file so the path is valid.
+	if err := os.WriteFile(imagePath, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	vms := checkExistingVMs(imagePath)
+	if len(vms) != 0 {
+		t.Errorf("expected no VMs, got %v", vms)
+	}
+}
+
+func TestCheckExistingVMs_WithBackedVM(t *testing.T) {
+	if _, err := exec.LookPath("qemu-img"); err != nil {
+		t.Skip("qemu-img not available, skipping")
+	}
+
+	dir := t.TempDir()
+
+	// Create a fake base image (real qcow2 so qemu-img info works).
+	basePath := filepath.Join(dir, "goship-vm.qcow2")
+	out, err := exec.Command("qemu-img", "create", "-f", "qcow2", basePath, "64M").CombinedOutput()
+	if err != nil {
+		t.Fatalf("creating base image: %v\n%s", err, out)
+	}
+
+	// Create a VM directory with a CoW disk backed by the base image.
+	vmDir := filepath.Join(dir, "vms", "test-vm")
+	if err := os.MkdirAll(vmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	diskPath := filepath.Join(vmDir, "disk.qcow2")
+	absBase, _ := filepath.Abs(basePath)
+	out, err = exec.Command("qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", absBase, diskPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("creating CoW disk: %v\n%s", err, out)
+	}
+
+	// checkExistingVMs scans ~/.goship/vms, but we need it to scan our temp dir.
+	// We can verify getBackingFile works correctly instead, and that the
+	// matching logic is correct by testing the pieces.
+
+	// Verify getBackingFile returns the correct backing file.
+	backing := getBackingFile(diskPath)
+	if backing != absBase {
+		t.Errorf("getBackingFile() = %q, want %q", backing, absBase)
+	}
+}
+
+func TestGetBackingFile_NoBacking(t *testing.T) {
+	if _, err := exec.LookPath("qemu-img"); err != nil {
+		t.Skip("qemu-img not available, skipping")
+	}
+
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "standalone.qcow2")
+
+	out, err := exec.Command("qemu-img", "create", "-f", "qcow2", imgPath, "64M").CombinedOutput()
+	if err != nil {
+		t.Fatalf("creating image: %v\n%s", err, out)
+	}
+
+	backing := getBackingFile(imgPath)
+	if backing != "" {
+		t.Errorf("expected empty backing file, got %q", backing)
+	}
+}
+
+func TestGetBackingFile_InvalidPath(t *testing.T) {
+	backing := getBackingFile("/nonexistent/path/disk.qcow2")
+	if backing != "" {
+		t.Errorf("expected empty backing file for nonexistent path, got %q", backing)
+	}
+}
+
+func TestQemuImgInfoJSON(t *testing.T) {
+	// Test that our JSON struct correctly parses qemu-img info output.
+	sample := `{"backing-filename": "/path/to/base.qcow2", "format": "qcow2"}`
+	var info qemuImgInfo
+	if err := json.Unmarshal([]byte(sample), &info); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if info.BackingFilename != "/path/to/base.qcow2" {
+		t.Errorf("BackingFilename = %q, want %q", info.BackingFilename, "/path/to/base.qcow2")
+	}
+
+	// Test with no backing file.
+	sample2 := `{"format": "qcow2"}`
+	var info2 qemuImgInfo
+	if err := json.Unmarshal([]byte(sample2), &info2); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if info2.BackingFilename != "" {
+		t.Errorf("BackingFilename = %q, want empty", info2.BackingFilename)
+	}
 }

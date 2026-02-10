@@ -16,4 +16,4 @@ coverage.html
 .DS_Store
 CLAUDE.md
 blog/
-goshipctl
+/goshipctl
