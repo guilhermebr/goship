@@ -6,8 +6,9 @@ const (
 	ActionStop   = "stop"
 	ActionRemove = "remove"
 	ActionStatus = "status"
-	ActionPing   = "ping"
-	ActionLogs   = "logs"
+	ActionPing       = "ping"
+	ActionLogs       = "logs"
+	ActionUpdateInit = "update-init"
 )
 
 // Response status constants.
@@ -21,6 +22,12 @@ type InitCommand struct {
 	Action  string `json:"action"`
 	AppName string `json:"app_name,omitempty"`
 	Lines   int    `json:"lines,omitempty"`
+
+	// Fields for update-init chunked transfer protocol.
+	Phase    string `json:"phase,omitempty"`    // "begin", "data", "finish"
+	Data     string `json:"data,omitempty"`     // base64-encoded chunk (data phase)
+	Size     int64  `json:"size,omitempty"`     // total binary size in bytes (begin phase)
+	Checksum string `json:"checksum,omitempty"` // sha256 hex digest (begin phase)
 }
 
 // InitResponse is the reply from the GoShip Init agent back to the host.
@@ -29,6 +36,9 @@ type InitResponse struct {
 	Error  string  `json:"error,omitempty"`
 	VMInfo *VMInfo `json:"vm_info,omitempty"`
 	Logs   string  `json:"logs,omitempty"`
+
+	// Fields for update-init progress.
+	BytesReceived int64 `json:"bytes_received,omitempty"`
 }
 
 // VMInfo carries VM identity and network information from the guest agent.

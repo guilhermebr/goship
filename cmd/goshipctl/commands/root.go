@@ -88,7 +88,7 @@ func needsRuntime(cmd *cobra.Command) bool {
 	name := cmd.Name()
 	// These project subcommands need the runtime for VM operations.
 	switch name {
-	case "create", "delete", "stop", "start", "restart":
+	case "create", "delete", "stop", "start", "restart", "update-init":
 		return parent == "project"
 	}
 	return false

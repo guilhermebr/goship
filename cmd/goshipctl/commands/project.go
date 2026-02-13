@@ -2,7 +2,10 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,6 +108,20 @@ var projectRestartCmd = &cobra.Command{
 	RunE:  runProjectRestart,
 }
 
+// Flags for project update-init.
+var (
+	updateInitBinary  string
+	updateInitRestart bool
+)
+
+var projectUpdateInitCmd = &cobra.Command{
+	Use:   "update-init <name>",
+	Short: "Push a new goship-init binary into a running VM",
+	Long:  `Transfers a new goship-init binary to the VM over virtio-serial using a chunked transfer protocol.`,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectUpdateInit,
+}
+
 func init() {
 	projectCreateCmd.Flags().Float64Var(&projectCPU, "cpu", 1, "Number of CPU cores")
 	projectCreateCmd.Flags().Int64Var(&projectMemory, "memory", 512, "Memory in MB")
@@ -115,6 +132,9 @@ func init() {
 	projectLogsCmd.Flags().IntVarP(&logsLines, "lines", "n", 100, "Number of log lines to show")
 	projectLogsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output (poll every 2s)")
 
+	projectUpdateInitCmd.Flags().StringVar(&updateInitBinary, "binary", "", "Path to goship-init binary (default: --goship-init flag value)")
+	projectUpdateInitCmd.Flags().BoolVar(&updateInitRestart, "restart", false, "Restart the VM after successful update")
+
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
@@ -124,6 +144,7 @@ func init() {
 	projectCmd.AddCommand(projectStopCmd)
 	projectCmd.AddCommand(projectStartCmd)
 	projectCmd.AddCommand(projectRestartCmd)
+	projectCmd.AddCommand(projectUpdateInitCmd)
 }
 
 func runProjectCreate(cmd *cobra.Command, args []string) error {
@@ -539,5 +560,139 @@ start:
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM restarted\n", name)
+	return nil
+}
+
+const updateInitChunkSize = 512 * 1024 // 512KB
+
+func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	// Resolve binary path.
+	binaryPath := updateInitBinary
+	if binaryPath == "" {
+		binaryPath = initBinaryPath // global --goship-init flag
+	}
+
+	// Read binary and compute checksum.
+	f, err := os.Open(binaryPath)
+	if err != nil {
+		return fmt.Errorf("failed to open binary %s: %w", binaryPath, err)
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat binary: %w", err)
+	}
+	totalSize := stat.Size()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+	checksum := fmt.Sprintf("%x", h.Sum(nil))
+
+	// Seek back to beginning for chunked reading.
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek binary: %w", err)
+	}
+
+	// Connect to VM via virtio-serial.
+	vmName := strings.TrimPrefix(instance.DomainName, lvrt.DomainPrefix)
+	socketPath := filepath.Join(expandDataDir(dataDir), "vms", vmName, "goship.sock")
+
+	comm, err := lvrt.NewVMCommunicator(socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer comm.Close()
+
+	// Phase: begin
+	fmt.Fprintf(cmd.OutOrStdout(), "Updating goship-init in project '%s'...\n", name)
+	fmt.Fprintf(cmd.OutOrStdout(), "  Binary: %s (%d bytes)\n", binaryPath, totalSize)
+	fmt.Fprintf(cmd.OutOrStdout(), "  SHA256: %s\n", checksum)
+
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action:   v1.ActionUpdateInit,
+		Phase:    "begin",
+		Size:     totalSize,
+		Checksum: checksum,
+	})
+	if err != nil {
+		return fmt.Errorf("begin phase failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("begin phase error: %s", resp.Error)
+	}
+
+	// Phase: data (chunked transfer)
+	buf := make([]byte, updateInitChunkSize)
+	var sent int64
+	chunkNum := 0
+
+	for {
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			chunkNum++
+			encoded := base64.StdEncoding.EncodeToString(buf[:n])
+
+			resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+				Action: v1.ActionUpdateInit,
+				Phase:  "data",
+				Data:   encoded,
+			})
+			if err != nil {
+				return fmt.Errorf("data phase chunk %d failed: %w", chunkNum, err)
+			}
+			if resp.Status != v1.StatusOK {
+				return fmt.Errorf("data phase chunk %d error: %s", chunkNum, resp.Error)
+			}
+
+			sent += int64(n)
+			pct := float64(sent) / float64(totalSize) * 100
+			fmt.Fprintf(cmd.OutOrStdout(), "  Sent chunk %d: %d/%d bytes (%.0f%%)\n", chunkNum, sent, totalSize, pct)
+		}
+
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("failed to read binary: %w", readErr)
+		}
+	}
+
+	// Phase: finish
+	resp, err = comm.SendCommand(ctx, &v1.InitCommand{
+		Action: v1.ActionUpdateInit,
+		Phase:  "finish",
+	})
+	if err != nil {
+		return fmt.Errorf("finish phase failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("finish phase error: %s", resp.Error)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "goship-init updated successfully in project '%s'\n", name)
+
+	// Optionally restart the VM.
+	if updateInitRestart {
+		fmt.Fprintf(cmd.OutOrStdout(), "Restarting VM...\n")
+		return runProjectRestart(cmd, args)
+	}
+
 	return nil
 }
