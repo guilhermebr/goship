@@ -304,6 +304,70 @@ func (r *Runtime) DestroyInstance(ctx context.Context, instanceID string) error 
 	return nil
 }
 
+// StopInstance gracefully shuts down a VM instance via ACPI.
+func (r *Runtime) StopInstance(ctx context.Context, instanceID string) error {
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	conn, err := r.getConnection()
+	if err != nil {
+		return fmt.Errorf("failed to get libvirt connection: %w", err)
+	}
+
+	domain, err := conn.LookupDomainByName(info.instance.DomainName)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+	defer domain.Free()
+
+	if err := domain.Shutdown(); err != nil {
+		return fmt.Errorf("failed to shutdown domain: %w", err)
+	}
+
+	r.mu.Lock()
+	info.instance.State = entities.InstanceStateStopping
+	info.instance.UpdatedAt = time.Now()
+	r.mu.Unlock()
+
+	return nil
+}
+
+// StartInstance starts a previously stopped VM instance.
+func (r *Runtime) StartInstance(ctx context.Context, instanceID string) error {
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	conn, err := r.getConnection()
+	if err != nil {
+		return fmt.Errorf("failed to get libvirt connection: %w", err)
+	}
+
+	domain, err := conn.LookupDomainByName(info.instance.DomainName)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+	defer domain.Free()
+
+	if err := domain.Create(); err != nil {
+		return fmt.Errorf("failed to start domain: %w", err)
+	}
+
+	r.mu.Lock()
+	info.instance.State = entities.InstanceStateRunning
+	info.instance.UpdatedAt = time.Now()
+	r.mu.Unlock()
+
+	return nil
+}
+
 // DeployApp deploys an application inside a VM instance.
 func (r *Runtime) DeployApp(ctx context.Context, instanceID string, app *entities.AppSpec) error {
 	return fmt.Errorf("app deployment not implemented")

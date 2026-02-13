@@ -326,6 +326,44 @@ func TestGetInstanceByID_NotFound(t *testing.T) {
 	}
 }
 
+func TestUpdateInstance(t *testing.T) {
+	store := setupTestStore(t)
+
+	instance := &entities.ProjectInstance{
+		ID:        "update-inst",
+		ProjectID: "proj",
+		State:     entities.InstanceStateRunning,
+	}
+	store.SetInstance(instance)
+
+	instance.State = entities.InstanceStateStopped
+	instance.IPAddress = "10.0.0.1"
+	err := store.UpdateInstance(instance)
+	if err != nil {
+		t.Fatalf("UpdateInstance: %v", err)
+	}
+
+	got := store.GetInstanceByID("update-inst")
+	if got == nil {
+		t.Fatal("GetInstanceByID returned nil")
+	}
+	if got.State != entities.InstanceStateStopped {
+		t.Errorf("State = %q, want %q", got.State, entities.InstanceStateStopped)
+	}
+	if got.IPAddress != "10.0.0.1" {
+		t.Errorf("IPAddress = %q, want %q", got.IPAddress, "10.0.0.1")
+	}
+}
+
+func TestUpdateInstance_NotFound(t *testing.T) {
+	store := setupTestStore(t)
+
+	err := store.UpdateInstance(&entities.ProjectInstance{ID: "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent instance")
+	}
+}
+
 func TestDeleteInstance(t *testing.T) {
 	store := setupTestStore(t)
 

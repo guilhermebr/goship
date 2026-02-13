@@ -1,7 +1,9 @@
 package gsinit
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -9,6 +11,13 @@ import (
 	"syscall"
 
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
+)
+
+const (
+	// DefaultLogFile is the path to the goship-init log file inside the VM.
+	DefaultLogFile = "/var/log/goship-init.log"
+	// DefaultLogLines is the default number of log lines to return.
+	DefaultLogLines = 100
 )
 
 // Init is the GoShip Init agent orchestrator.
@@ -40,6 +49,7 @@ func newFromCommunicator(comm *Communicator) *Init {
 
 	comm.RegisterHandler(v1.ActionPing, i.handlePing)
 	comm.RegisterHandler(v1.ActionStatus, i.handleStatus)
+	comm.RegisterHandler(v1.ActionLogs, i.handleLogs)
 
 	return i
 }
@@ -80,6 +90,59 @@ func (i *Init) Shutdown() {
 
 func (i *Init) handlePing(_ *v1.InitCommand) *v1.InitResponse {
 	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+func (i *Init) handleLogs(cmd *v1.InitCommand) *v1.InitResponse {
+	lines := cmd.Lines
+	if lines <= 0 {
+		lines = DefaultLogLines
+	}
+
+	content, err := readLastNLines(DefaultLogFile, lines)
+	if err != nil {
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to read logs: %v", err),
+		}
+	}
+
+	return &v1.InitResponse{
+		Status: v1.StatusOK,
+		Logs:   content,
+	}
+}
+
+// readLastNLines reads the last n lines from a file.
+func readLastNLines(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	// Use a ring buffer to keep only the last n lines.
+	ring := make([]string, 0, n)
+	for scanner.Scan() {
+		if len(ring) < n {
+			ring = append(ring, scanner.Text())
+		} else {
+			copy(ring, ring[1:])
+			ring[n-1] = scanner.Text()
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	result := ""
+	for i, line := range ring {
+		if i > 0 {
+			result += "\n"
+		}
+		result += line
+	}
+	return result, nil
 }
 
 func (i *Init) handleStatus(_ *v1.InitCommand) *v1.InitResponse {

@@ -3,11 +3,18 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
@@ -56,6 +63,48 @@ var projectInfoCmd = &cobra.Command{
 	RunE:  runProjectInfo,
 }
 
+var projectConsoleCmd = &cobra.Command{
+	Use:   "console <name>",
+	Short: "Attach to the VM console",
+	Long:  `Opens an interactive console to the project VM via virsh.`,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectConsole,
+}
+
+// Flags for project logs.
+var (
+	logsLines  int
+	logsFollow bool
+)
+
+var projectLogsCmd = &cobra.Command{
+	Use:   "logs <name>",
+	Short: "Show goship-init logs from the VM",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectLogs,
+}
+
+var projectStopCmd = &cobra.Command{
+	Use:   "stop <name>",
+	Short: "Stop a project VM (graceful ACPI shutdown)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectStop,
+}
+
+var projectStartCmd = &cobra.Command{
+	Use:   "start <name>",
+	Short: "Start a stopped project VM",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectStart,
+}
+
+var projectRestartCmd = &cobra.Command{
+	Use:   "restart <name>",
+	Short: "Restart a project VM (stop then start)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProjectRestart,
+}
+
 func init() {
 	projectCreateCmd.Flags().Float64Var(&projectCPU, "cpu", 1, "Number of CPU cores")
 	projectCreateCmd.Flags().Int64Var(&projectMemory, "memory", 512, "Memory in MB")
@@ -63,10 +112,18 @@ func init() {
 	projectCreateCmd.Flags().StringVar(&projectNetworkType, "network-type", "", "Network type (network, bridge, user)")
 	projectCreateCmd.Flags().StringVar(&projectNetworkSource, "network-source", "", "Network source (network name or bridge name)")
 
+	projectLogsCmd.Flags().IntVarP(&logsLines, "lines", "n", 100, "Number of log lines to show")
+	projectLogsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output (poll every 2s)")
+
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
 	projectCmd.AddCommand(projectInfoCmd)
+	projectCmd.AddCommand(projectConsoleCmd)
+	projectCmd.AddCommand(projectLogsCmd)
+	projectCmd.AddCommand(projectStopCmd)
+	projectCmd.AddCommand(projectStartCmd)
+	projectCmd.AddCommand(projectRestartCmd)
 }
 
 func runProjectCreate(cmd *cobra.Command, args []string) error {
@@ -233,5 +290,254 @@ func runProjectInfo(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	return nil
+}
+
+func runProjectConsole(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	if instance.DomainName == "" {
+		return fmt.Errorf("no domain name for instance %s", instance.ID)
+	}
+
+	virshPath, err := exec.LookPath("virsh")
+	if err != nil {
+		return fmt.Errorf("virsh not found in PATH: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Connecting to console of %s...\n", instance.DomainName)
+	fmt.Fprintf(cmd.OutOrStdout(), "Use Ctrl+] to exit the console.\n\n")
+
+	// Replace current process with virsh console for full TTY control.
+	return syscall.Exec(virshPath, []string{"virsh", "console", instance.DomainName}, os.Environ())
+}
+
+func runProjectLogs(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	// Derive the socket path from the domain name.
+	vmName := strings.TrimPrefix(instance.DomainName, lvrt.DomainPrefix)
+	socketPath := filepath.Join(expandDataDir(dataDir), "vms", vmName, "goship.sock")
+
+	fetchLogs := func() (string, error) {
+		comm, err := lvrt.NewVMCommunicator(socketPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to connect to VM: %w", err)
+		}
+		defer comm.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+			Action: v1.ActionLogs,
+			Lines:  logsLines,
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to get logs: %w", err)
+		}
+		if resp.Status != v1.StatusOK {
+			return "", fmt.Errorf("agent error: %s", resp.Error)
+		}
+		return resp.Logs, nil
+	}
+
+	logs, err := fetchLogs()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), logs)
+
+	if logsFollow {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		lastLogs := logs
+		for range ticker.C {
+			logs, err := fetchLogs()
+			if err != nil {
+				printError("failed to fetch logs: %v", err)
+				continue
+			}
+			// Only print new content.
+			if logs != lastLogs {
+				fmt.Fprintln(cmd.OutOrStdout(), logs)
+				lastLogs = logs
+			}
+		}
+	}
+
+	return nil
+}
+
+// expandDataDir expands ~ in the data directory path.
+func expandDataDir(dir string) string {
+	if strings.HasPrefix(dir, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, dir[2:])
+		}
+	}
+	return dir
+}
+
+func runProjectStop(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	rt.LoadInstance(instance)
+
+	printVerbose("Stopping VM for project %s...", name)
+
+	if err := rt.StopInstance(ctx, instance.ID); err != nil {
+		return fmt.Errorf("failed to stop VM: %w", err)
+	}
+
+	instance.State = entities.InstanceStateStopping
+	if err := store.UpdateInstance(instance); err != nil {
+		printError("failed to update instance state: %v", err)
+	}
+
+	project.State = entities.ProjectStateStopped
+	if err := store.UpdateProject(project); err != nil {
+		printError("failed to update project state: %v", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM stopping (ACPI shutdown sent)\n", name)
+	return nil
+}
+
+func runProjectStart(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	rt.LoadInstance(instance)
+
+	printVerbose("Starting VM for project %s...", name)
+
+	if err := rt.StartInstance(ctx, instance.ID); err != nil {
+		return fmt.Errorf("failed to start VM: %w", err)
+	}
+
+	instance.State = entities.InstanceStateRunning
+	if err := store.UpdateInstance(instance); err != nil {
+		printError("failed to update instance state: %v", err)
+	}
+
+	project.State = entities.ProjectStateRunning
+	if err := store.UpdateProject(project); err != nil {
+		printError("failed to update project state: %v", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM started\n", name)
+	return nil
+}
+
+func runProjectRestart(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	rt.LoadInstance(instance)
+
+	printVerbose("Restarting VM for project %s...", name)
+
+	// Stop the VM.
+	if err := rt.StopInstance(ctx, instance.ID); err != nil {
+		return fmt.Errorf("failed to stop VM: %w", err)
+	}
+
+	// Wait for the domain to reach shut off state before starting.
+	printVerbose("Waiting for VM to shut down...")
+	waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer waitCancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("timed out waiting for VM to stop")
+		case <-ticker.C:
+			status, err := rt.GetInstanceStatus(waitCtx, instance.ID)
+			if err != nil {
+				continue
+			}
+			if status.State == entities.InstanceStateStopped {
+				goto start
+			}
+		}
+	}
+
+start:
+	// Start the VM.
+	if err := rt.StartInstance(ctx, instance.ID); err != nil {
+		return fmt.Errorf("failed to start VM: %w", err)
+	}
+
+	instance.State = entities.InstanceStateRunning
+	if err := store.UpdateInstance(instance); err != nil {
+		printError("failed to update instance state: %v", err)
+	}
+
+	project.State = entities.ProjectStateRunning
+	if err := store.UpdateProject(project); err != nil {
+		printError("failed to update project state: %v", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM restarted\n", name)
 	return nil
 }

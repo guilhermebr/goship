@@ -21,6 +21,12 @@ type ProjectRuntime interface {
 	// This should be idempotent - destroying a non-existent instance should not error.
 	DestroyInstance(ctx context.Context, instanceID string) error
 
+	// StopInstance gracefully shuts down a VM instance (ACPI shutdown).
+	StopInstance(ctx context.Context, instanceID string) error
+
+	// StartInstance starts a previously stopped VM instance.
+	StartInstance(ctx context.Context, instanceID string) error
+
 	// DeployApp deploys an application inside a VM instance.
 	DeployApp(ctx context.Context, instanceID string, app *entities.AppSpec) error
 

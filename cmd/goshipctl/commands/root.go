@@ -86,8 +86,12 @@ func needsRuntime(cmd *cobra.Command) bool {
 		parent = cmd.Parent().Name()
 	}
 	name := cmd.Name()
-	// project create and project delete need the runtime for VM operations.
-	return parent == "project" && (name == "create" || name == "delete")
+	// These project subcommands need the runtime for VM operations.
+	switch name {
+	case "create", "delete", "stop", "start", "restart":
+		return parent == "project"
+	}
+	return false
 }
 
 // initResources initializes shared resources based on command needs.

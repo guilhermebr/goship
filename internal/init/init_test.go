@@ -50,6 +50,42 @@ func TestHandleStatus(t *testing.T) {
 	}
 }
 
+func TestHandleLogs(t *testing.T) {
+	agent, _, _ := newTestInit(t)
+
+	// Create a temporary log file.
+	tmpFile := t.TempDir() + "/goship-init.log"
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override the default log file path for testing via readLastNLines directly.
+	// Test readLastNLines with the temp file.
+	result, err := readLastNLines(tmpFile, 3)
+	if err != nil {
+		t.Fatalf("readLastNLines: %v", err)
+	}
+	if result != "line3\nline4\nline5" {
+		t.Fatalf("expected last 3 lines, got %q", result)
+	}
+
+	// Test with more lines than file has.
+	result, err = readLastNLines(tmpFile, 100)
+	if err != nil {
+		t.Fatalf("readLastNLines: %v", err)
+	}
+	if result != "line1\nline2\nline3\nline4\nline5" {
+		t.Fatalf("expected all 5 lines, got %q", result)
+	}
+
+	// Test handleLogs returns error for missing log file (DefaultLogFile won't exist in test).
+	resp := agent.handleLogs(&v1.InitCommand{Action: v1.ActionLogs, Lines: 10})
+	if resp.Status != v1.StatusError {
+		t.Fatalf("expected error status for missing log file, got %q", resp.Status)
+	}
+}
+
 func TestShutdown(t *testing.T) {
 	agent, _, _ := newTestInit(t)
 

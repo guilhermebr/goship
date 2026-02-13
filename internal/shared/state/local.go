@@ -231,6 +231,21 @@ func (s *Store) GetInstance(projectID string) *entities.ProjectInstance {
 	return s.state.GetInstance(projectID)
 }
 
+// UpdateInstance updates an existing instance in the state store.
+func (s *Store) UpdateInstance(instance *entities.ProjectInstance) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.state.Instances[instance.ID]; !ok {
+		return fmt.Errorf("instance not found: %s", instance.ID)
+	}
+
+	instance.UpdatedAt = time.Now()
+	s.state.Instances[instance.ID] = instance
+
+	return s.save()
+}
+
 // GetInstanceByID returns an instance by ID.
 func (s *Store) GetInstanceByID(instanceID string) *entities.ProjectInstance {
 	s.mu.RLock()

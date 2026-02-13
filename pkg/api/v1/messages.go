@@ -7,6 +7,7 @@ const (
 	ActionRemove = "remove"
 	ActionStatus = "status"
 	ActionPing   = "ping"
+	ActionLogs   = "logs"
 )
 
 // Response status constants.
@@ -19,6 +20,7 @@ const (
 type InitCommand struct {
 	Action  string `json:"action"`
 	AppName string `json:"app_name,omitempty"`
+	Lines   int    `json:"lines,omitempty"`
 }
 
 // InitResponse is the reply from the GoShip Init agent back to the host.
@@ -26,6 +28,7 @@ type InitResponse struct {
 	Status string  `json:"status"`
 	Error  string  `json:"error,omitempty"`
 	VMInfo *VMInfo `json:"vm_info,omitempty"`
+	Logs   string  `json:"logs,omitempty"`
 }
 
 // VMInfo carries VM identity and network information from the guest agent.
