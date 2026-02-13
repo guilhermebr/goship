@@ -36,6 +36,18 @@ func TestHandleStatus(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("expected no error, got %q", resp.Error)
 	}
+
+	// VMInfo should be present with hostname and at least one IP.
+	if resp.VMInfo == nil {
+		t.Fatal("expected VMInfo to be set")
+	}
+	if resp.VMInfo.Hostname == "" {
+		t.Fatal("expected hostname to be set")
+	}
+	// The test host should have at least one non-loopback IP.
+	if len(resp.VMInfo.IPAddresses) == 0 {
+		t.Fatal("expected at least one IP address")
+	}
 }
 
 func TestShutdown(t *testing.T) {

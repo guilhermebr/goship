@@ -3,6 +3,7 @@ package gsinit
 import (
 	"context"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -82,5 +83,38 @@ func (i *Init) handlePing(_ *v1.InitCommand) *v1.InitResponse {
 }
 
 func (i *Init) handleStatus(_ *v1.InitCommand) *v1.InitResponse {
-	return &v1.InitResponse{Status: v1.StatusOK}
+	vmInfo := &v1.VMInfo{}
+
+	if hostname, err := os.Hostname(); err == nil {
+		vmInfo.Hostname = hostname
+	}
+
+	ifaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range ifaces {
+			// Skip loopback and interfaces that are down.
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip == nil || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+					continue
+				}
+				vmInfo.IPAddresses = append(vmInfo.IPAddresses, ip.String())
+			}
+		}
+	}
+
+	return &v1.InitResponse{Status: v1.StatusOK, VMInfo: vmInfo}
 }

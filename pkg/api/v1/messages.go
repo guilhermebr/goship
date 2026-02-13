@@ -23,6 +23,13 @@ type InitCommand struct {
 
 // InitResponse is the reply from the GoShip Init agent back to the host.
 type InitResponse struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Status string  `json:"status"`
+	Error  string  `json:"error,omitempty"`
+	VMInfo *VMInfo `json:"vm_info,omitempty"`
+}
+
+// VMInfo carries VM identity and network information from the guest agent.
+type VMInfo struct {
+	Hostname    string   `json:"hostname,omitempty"`
+	IPAddresses []string `json:"ip_addresses,omitempty"`
 }
