@@ -12,9 +12,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
+	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
 const (
@@ -35,13 +38,16 @@ type updateState struct {
 }
 
 // Init is the GoShip Init agent orchestrator.
-// It manages the communicator lifecycle and registers command handlers.
+// It manages the communicator lifecycle, Docker/Process executors, and command handlers.
 type Init struct {
-	comm    *Communicator
-	ctx     context.Context
-	cancel  context.CancelFunc
-	initDir string       // directory where goship-init binary lives
-	update  *updateState // in-progress update transfer (nil when idle)
+	comm     *Communicator
+	docker   *DockerManager
+	process  *ProcessManager
+	executor *ExecutorManager
+	ctx      context.Context
+	cancel   context.CancelFunc
+	initDir  string       // directory where goship-init binary lives
+	update   *updateState // in-progress update transfer (nil when idle)
 }
 
 // New creates a new Init agent with the given serial device path.
@@ -62,14 +68,36 @@ func newFromCommunicator(comm *Communicator) *Init {
 func newFromCommunicatorWithDir(comm *Communicator, initDir string) *Init {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Wait for Docker daemon (optional for container mode).
+	docker, err := waitForDocker(ctx, 60*time.Second)
+	if err != nil {
+		log.Printf("goship-init: Docker not available: %v (process mode only)", err)
+		docker = nil
+	}
+
+	// Process manager is always available.
+	process, err := NewProcessManager()
+	if err != nil {
+		log.Printf("goship-init: failed to create process manager: %v", err)
+		process = nil
+	}
+
+	executor := NewExecutorManager(docker, process)
+
 	i := &Init{
-		comm:    comm,
-		ctx:     ctx,
-		cancel:  cancel,
-		initDir: initDir,
+		comm:     comm,
+		docker:   docker,
+		process:  process,
+		executor: executor,
+		ctx:      ctx,
+		cancel:   cancel,
+		initDir:  initDir,
 	}
 
 	comm.RegisterHandler(v1.ActionPing, i.handlePing)
+	comm.RegisterHandler(v1.ActionDeploy, i.handleDeploy)
+	comm.RegisterHandler(v1.ActionStop, i.handleStop)
+	comm.RegisterHandler(v1.ActionRemove, i.handleRemove)
 	comm.RegisterHandler(v1.ActionStatus, i.handleStatus)
 	comm.RegisterHandler(v1.ActionLogs, i.handleLogs)
 	comm.RegisterHandler(v1.ActionUpdateInit, i.handleUpdateInit)
@@ -106,6 +134,9 @@ func (i *Init) Run() error {
 // Shutdown gracefully stops the agent.
 func (i *Init) Shutdown() {
 	i.cancel()
+	if err := i.executor.Close(); err != nil {
+		log.Printf("goship-init: error closing executor manager: %v", err)
+	}
 	if err := i.comm.Close(); err != nil {
 		log.Printf("goship-init: error closing communicator: %v", err)
 	}
@@ -115,13 +146,73 @@ func (i *Init) handlePing(_ *v1.InitCommand) *v1.InitResponse {
 	return &v1.InitResponse{Status: v1.StatusOK}
 }
 
+func (i *Init) handleDeploy(cmd *v1.InitCommand) *v1.InitResponse {
+	if cmd.App == nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "app spec is required"}
+	}
+
+	if cmd.App.IsContainerMode() {
+		if cmd.App.Image == "" {
+			return &v1.InitResponse{Status: v1.StatusError, Error: "image is required for container mode"}
+		}
+		if i.docker == nil {
+			return &v1.InitResponse{Status: v1.StatusError, Error: "Docker is not available for container mode"}
+		}
+	} else if cmd.App.IsProcessMode() {
+		if cmd.App.Binary == "" {
+			return &v1.InitResponse{Status: v1.StatusError, Error: "binary is required for process mode"}
+		}
+	}
+
+	if err := i.executor.Deploy(i.ctx, cmd.App); err != nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: err.Error()}
+	}
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+func (i *Init) handleStop(cmd *v1.InitCommand) *v1.InitResponse {
+	if cmd.AppName == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "app name is required"}
+	}
+
+	if err := i.executor.Stop(i.ctx, cmd.AppName); err != nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: err.Error()}
+	}
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+func (i *Init) handleRemove(cmd *v1.InitCommand) *v1.InitResponse {
+	if cmd.AppName == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "app name is required"}
+	}
+
+	if err := i.executor.Remove(i.ctx, cmd.AppName); err != nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: err.Error()}
+	}
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
 func (i *Init) handleLogs(cmd *v1.InitCommand) *v1.InitResponse {
 	lines := cmd.Lines
 	if lines <= 0 {
 		lines = DefaultLogLines
 	}
 
-	content, err := readLastNLines(DefaultLogFile, lines)
+	logFile := cmd.LogFile
+	if logFile == "" {
+		logFile = DefaultLogFile
+	}
+
+	// Validate the path: clean it and restrict to /var/log/ to prevent arbitrary file reads.
+	logFile = filepath.Clean(logFile)
+	if !strings.HasPrefix(logFile, "/var/log/") {
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  "log file must be under /var/log/",
+		}
+	}
+
+	content, err := readLastNLines(logFile, lines)
 	if err != nil {
 		return &v1.InitResponse{
 			Status: v1.StatusError,
@@ -169,40 +260,103 @@ func readLastNLines(path string, n int) (string, error) {
 }
 
 func (i *Init) handleStatus(_ *v1.InitCommand) *v1.InitResponse {
-	vmInfo := &v1.VMInfo{}
-
-	if hostname, err := os.Hostname(); err == nil {
-		vmInfo.Hostname = hostname
+	apps, err := i.executor.GetAllStatus(i.ctx)
+	if err != nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: err.Error()}
 	}
 
-	ifaces, err := net.Interfaces()
-	if err == nil {
-		for _, iface := range ifaces {
-			// Skip loopback and interfaces that are down.
-			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
-				continue
-			}
-			addrs, err := iface.Addrs()
-			if err != nil {
-				continue
-			}
-			for _, addr := range addrs {
-				var ip net.IP
-				switch v := addr.(type) {
-				case *net.IPNet:
-					ip = v.IP
-				case *net.IPAddr:
-					ip = v.IP
-				}
-				if ip == nil || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-					continue
-				}
-				vmInfo.IPAddresses = append(vmInfo.IPAddresses, ip.String())
-			}
+	// Build backwards-compatible Containers list from container-mode apps.
+	var containers []v1.ContainerStatus
+	for _, app := range apps {
+		if app.ExecutionMode == entities.ExecutionModeContainer || app.ExecutionMode == "" {
+			containers = append(containers, app.ToContainerStatus())
 		}
 	}
 
-	return &v1.InitResponse{Status: v1.StatusOK, VMInfo: vmInfo}
+	return &v1.InitResponse{
+		Status:     v1.StatusOK,
+		Apps:       apps,
+		Containers: containers,
+		VMInfo:     i.getVMInfo(),
+	}
+}
+
+// getVMInfo returns information about the VM.
+func (i *Init) getVMInfo() *v1.VMInfo {
+	hostname, _ := os.Hostname()
+
+	var dockerVersion string
+	if i.docker != nil {
+		dockerVersion, _ = i.docker.GetDockerVersion(i.ctx)
+	}
+
+	return &v1.VMInfo{
+		Hostname:      hostname,
+		IPAddresses:   getIPAddresses(),
+		DockerVersion: dockerVersion,
+		UptimeSeconds: getUptime(),
+	}
+}
+
+// getIPAddresses returns all non-loopback IPv4 addresses.
+func getIPAddresses() []string {
+	var ips []string
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ips
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+				ips = append(ips, ipnet.IP.String())
+			}
+		}
+	}
+	return ips
+}
+
+// getUptime returns the system uptime in seconds.
+func getUptime() int64 {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	var uptime float64
+	if _, err := fmt.Sscanf(string(data), "%f", &uptime); err != nil {
+		return 0
+	}
+	return int64(uptime)
+}
+
+// waitForDocker waits for the Docker daemon to become available.
+func waitForDocker(ctx context.Context, timeout time.Duration) (*DockerManager, error) {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		docker, err := NewDockerManager()
+		if err == nil {
+			if _, err = docker.GetDockerVersion(ctx); err == nil {
+				return docker, nil
+			}
+			docker.Close()
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return nil, fmt.Errorf("timeout waiting for Docker daemon")
 }
 
 func (i *Init) handleUpdateInit(cmd *v1.InitCommand) *v1.InitResponse {
