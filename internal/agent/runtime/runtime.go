@@ -94,6 +94,8 @@ type RuntimeConfig struct {
 	ProvisionGuest bool
 	// InstallDocker installs Docker inside the VM during provisioning
 	InstallDocker bool
+	// ProgressWriter, if set, receives boot progress and cloud-init log output
+	ProgressWriter io.Writer
 }
 
 // DefaultConfig returns the default runtime configuration.
@@ -172,4 +174,9 @@ func WithProvisionGuest(enable bool) RuntimeOption {
 // WithInstallDocker enables or disables Docker installation during provisioning.
 func WithInstallDocker(enable bool) RuntimeOption {
 	return func(c *RuntimeConfig) { c.InstallDocker = enable }
+}
+
+// WithProgressWriter sets a writer for boot progress and cloud-init log output.
+func WithProgressWriter(w io.Writer) RuntimeOption {
+	return func(c *RuntimeConfig) { c.ProgressWriter = w }
 }

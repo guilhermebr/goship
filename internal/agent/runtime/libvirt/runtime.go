@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"log"
-
 	"github.com/google/uuid"
 	"libvirt.org/go/libvirt"
 
@@ -133,6 +131,10 @@ func (r *Runtime) CreateInstance(ctx context.Context, project *entities.Project)
 	if project.Resources.MemoryMB > 0 {
 		memoryMB = project.Resources.MemoryMB
 	}
+	diskMB := r.config.DefaultDiskMB
+	if project.Resources.DiskMB > 0 {
+		diskMB = project.Resources.DiskMB
+	}
 
 	// Read SSH key if configured.
 	var sshKey string
@@ -150,6 +152,7 @@ func (r *Runtime) CreateInstance(ctx context.Context, project *entities.Project)
 		Name:           project.Name,
 		BaseImage:      r.config.VMImagePath,
 		MemoryMB:       memoryMB,
+		DiskMB:         diskMB,
 		CPUs:           cpus,
 		EnableKVM:      r.config.EnableKVM,
 		SecurityNone:   true,
@@ -215,7 +218,7 @@ func (r *Runtime) LoadInstance(instance *entities.ProjectInstance) {
 }
 
 // waitReady polls the VM until it boots and the goship-init agent responds.
-// It sends a ping first, then a status command to retrieve the VM's IP address.
+// It sends a ping first, then streams cloud-init logs while waiting for status.
 func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
@@ -224,8 +227,21 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 		return fmt.Errorf("instance not found: %s", instanceID)
 	}
 
+	pw := r.config.ProgressWriter
+	progress := func(format string, args ...any) {
+		if pw != nil {
+			fmt.Fprintf(pw, format+"\n", args...)
+		}
+	}
+
+	progress("Waiting for VM to boot...")
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	domainReady := false
+	agentReady := false
+	logOffset := 0 // bytes of cloud-init log already printed
 
 	for {
 		select {
@@ -249,6 +265,11 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 			continue
 		}
 
+		if !domainReady {
+			domainReady = true
+			progress("Waiting for agent...")
+		}
+
 		// Try connecting to the virtio-serial socket.
 		comm, err := NewVMCommunicator(info.socketPath)
 		if err != nil {
@@ -259,6 +280,28 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 		if err := comm.Ping(ctx); err != nil {
 			comm.Close()
 			continue
+		}
+
+		if !agentReady {
+			agentReady = true
+			progress("Agent connected, streaming cloud-init logs...")
+		}
+
+		// Fetch cloud-init logs and print new lines.
+		logResp, err := comm.SendCommand(ctx, &v1.InitCommand{
+			Action:  v1.ActionLogs,
+			LogFile: "/var/log/cloud-init-output.log",
+		})
+		if err == nil && logResp.Status == v1.StatusOK && len(logResp.Logs) > logOffset {
+			newContent := logResp.Logs[logOffset:]
+			// Print each new line with a prefix.
+			lines := strings.Split(newContent, "\n")
+			for _, line := range lines {
+				if line != "" {
+					progress("  %s", line)
+				}
+			}
+			logOffset = len(logResp.Logs)
 		}
 
 		// Send status to get VM info (IP, hostname).
@@ -277,7 +320,7 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 		}
 		r.mu.Unlock()
 
-		log.Printf("VM %s ready (IP: %s)", info.instance.DomainName, info.instance.IPAddress)
+		progress("VM ready (IP: %s)", info.instance.IPAddress)
 		return nil
 	}
 }
@@ -368,19 +411,88 @@ func (r *Runtime) StartInstance(ctx context.Context, instanceID string) error {
 	return nil
 }
 
-// DeployApp deploys an application inside a VM instance.
+// DeployApp deploys an application inside a VM instance via virtio-serial.
 func (r *Runtime) DeployApp(ctx context.Context, instanceID string, app *entities.AppSpec) error {
-	return fmt.Errorf("app deployment not implemented")
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	comm, err := NewVMCommunicator(info.socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer comm.Close()
+
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action: v1.ActionDeploy,
+		App:    app,
+	})
+	if err != nil {
+		return fmt.Errorf("deploy command failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("deploy failed: %s", resp.Error)
+	}
+	return nil
 }
 
-// StopApp stops a running application inside a VM instance.
+// StopApp stops a running application inside a VM instance via virtio-serial.
 func (r *Runtime) StopApp(ctx context.Context, instanceID string, appName string) error {
-	return fmt.Errorf("app stop not implemented")
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	comm, err := NewVMCommunicator(info.socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer comm.Close()
+
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action:  v1.ActionStop,
+		AppName: appName,
+	})
+	if err != nil {
+		return fmt.Errorf("stop command failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("stop failed: %s", resp.Error)
+	}
+	return nil
 }
 
-// RemoveApp removes an application from a VM instance.
+// RemoveApp removes an application from a VM instance via virtio-serial.
 func (r *Runtime) RemoveApp(ctx context.Context, instanceID string, appName string) error {
-	return fmt.Errorf("app remove not implemented")
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	comm, err := NewVMCommunicator(info.socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer comm.Close()
+
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action:  v1.ActionRemove,
+		AppName: appName,
+	})
+	if err != nil {
+		return fmt.Errorf("remove command failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("remove failed: %s", resp.Error)
+	}
+	return nil
 }
 
 // GetInstanceStatus returns the current status of a VM instance.
