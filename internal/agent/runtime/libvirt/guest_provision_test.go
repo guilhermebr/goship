@@ -32,7 +32,6 @@ func TestBuildVirtCustomizeArgs_ContainsInitAndServiceWiring(t *testing.T) {
 	args := buildVirtCustomizeArgs(GuestProvisionOptions{
 		DiskPath:       "/tmp/disk.qcow2",
 		InitBinaryPath: "/tmp/goship-init",
-		InstallDocker:  false,
 	}, "/tmp/goship-init-service-123", "/tmp/goship-resolv-123")
 
 	joined := strings.Join(args, " ")
@@ -86,7 +85,6 @@ func TestProvisionGuestDisk_InvokesVirtCustomize(t *testing.T) {
 	if err := ProvisionGuestDisk(GuestProvisionOptions{
 		DiskPath:       disk,
 		InitBinaryPath: initBin,
-		InstallDocker:  true,
 	}); err != nil {
 		t.Fatalf("ProvisionGuestDisk error: %v", err)
 	}

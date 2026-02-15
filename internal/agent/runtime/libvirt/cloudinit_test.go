@@ -168,6 +168,94 @@ func TestCloudInitUserDataContent(t *testing.T) {
 	}
 }
 
+func TestCloudInitUserDataContent_WithDocker(t *testing.T) {
+	if !isoToolAvailable() {
+		t.Skip("skipping: neither genisoimage nor mkisofs available")
+	}
+
+	tmpDir := t.TempDir()
+	isoPath := filepath.Join(tmpDir, "cloud-init.iso")
+
+	config := &CloudInitConfig{
+		InstanceID:    "docker-test-uuid",
+		Hostname:      "docker-host",
+		SSHKey:        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host",
+		InstallDocker: true,
+	}
+
+	if err := GenerateCloudInitISO(config, isoPath); err != nil {
+		t.Fatalf("GenerateCloudInitISO() error: %v", err)
+	}
+
+	if _, err := exec.LookPath("isoinfo"); err != nil {
+		t.Skip("skipping content verification: isoinfo not available")
+	}
+
+	out, err := exec.Command("isoinfo", "-i", isoPath, "-R", "-x", "/user-data").CombinedOutput()
+	if err != nil {
+		t.Fatalf("isoinfo failed: %v\n%s", err, out)
+	}
+
+	userData := string(out)
+	for _, expected := range []string{
+		"packages:",
+		"- docker",
+		"- docker-cli",
+		"runcmd:",
+		"rc-update, add, cgroups, boot",
+		"service, cgroups, start",
+		"rc-update, add, docker, boot",
+		"service, docker, start",
+		"groups: wheel, docker",
+	} {
+		if !strings.Contains(userData, expected) {
+			t.Errorf("user-data missing %q, got:\n%s", expected, userData)
+		}
+	}
+}
+
+func TestCloudInitUserDataContent_WithoutDocker(t *testing.T) {
+	if !isoToolAvailable() {
+		t.Skip("skipping: neither genisoimage nor mkisofs available")
+	}
+
+	tmpDir := t.TempDir()
+	isoPath := filepath.Join(tmpDir, "cloud-init.iso")
+
+	config := &CloudInitConfig{
+		InstanceID:    "plain-test-uuid",
+		Hostname:      "plain-host",
+		InstallDocker: false,
+	}
+
+	if err := GenerateCloudInitISO(config, isoPath); err != nil {
+		t.Fatalf("GenerateCloudInitISO() error: %v", err)
+	}
+
+	if _, err := exec.LookPath("isoinfo"); err != nil {
+		t.Skip("skipping content verification: isoinfo not available")
+	}
+
+	out, err := exec.Command("isoinfo", "-i", isoPath, "-R", "-x", "/user-data").CombinedOutput()
+	if err != nil {
+		t.Fatalf("isoinfo failed: %v\n%s", err, out)
+	}
+
+	userData := string(out)
+	if strings.Contains(userData, "packages:") {
+		t.Errorf("user-data should not contain packages when Docker disabled, got:\n%s", userData)
+	}
+	if strings.Contains(userData, "runcmd:") {
+		t.Errorf("user-data should not contain runcmd when Docker disabled, got:\n%s", userData)
+	}
+	if !strings.Contains(userData, "groups: wheel") {
+		t.Errorf("user-data missing groups: wheel, got:\n%s", userData)
+	}
+	if strings.Contains(userData, "docker") {
+		t.Errorf("user-data should not mention docker when Docker disabled, got:\n%s", userData)
+	}
+}
+
 func TestFindISOTool(t *testing.T) {
 	tool, err := findISOTool()
 	if err != nil {

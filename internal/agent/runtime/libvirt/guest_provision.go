@@ -41,7 +41,6 @@ var (
 type GuestProvisionOptions struct {
 	DiskPath       string
 	InitBinaryPath string
-	InstallDocker  bool
 }
 
 // CheckGuestProvisionDependencies validates host-side tooling used to customize
@@ -123,14 +122,6 @@ func buildVirtCustomizeArgs(opts GuestProvisionOptions, serviceScriptPath, resol
 		"--chmod", "0755:/etc/init.d/goship-init",
 		"--run-command", "rc-update add goship-init default",
 		"--upload", resolvPath + ":/etc/resolv.conf",
-	}
-
-	if opts.InstallDocker {
-		// Docker is optional for step-6 ping; keep provisioning resilient.
-		args = append(args,
-			"--run-command", "apk add docker docker-cli || (apk update && apk add docker docker-cli) || true",
-			"--run-command", "rc-update add docker boot || true",
-		)
 	}
 
 	return args

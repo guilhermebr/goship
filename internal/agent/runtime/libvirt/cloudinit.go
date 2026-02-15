@@ -9,9 +9,10 @@ import (
 
 // CloudInitConfig holds the parameters for generating a cloud-init NoCloud ISO.
 type CloudInitConfig struct {
-	InstanceID string // unique ID (UUID); cloud-init uses this to detect re-runs
-	Hostname   string
-	SSHKey     string // public key content (not path)
+	InstanceID    string // unique ID (UUID); cloud-init uses this to detect re-runs
+	Hostname      string
+	SSHKey        string // public key content (not path)
+	InstallDocker bool   // install Docker via cloud-init packages
 }
 
 // GenerateCloudInitISO creates a NoCloud ISO at outputPath containing the
@@ -40,11 +41,30 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 	// - The goship user gets its own SSH key nested under the users entry.
 	userData := "#cloud-config\n"
 	userData += fmt.Sprintf("hostname: %s\n", config.Hostname)
+
+	// Docker: install packages via cloud-init (VM has network access, unlike virt-customize).
+	if config.InstallDocker {
+		userData += "packages:\n"
+		userData += "  - docker\n"
+		userData += "  - docker-cli\n"
+		userData += "runcmd:\n"
+		// cgroups must be running before Docker can start on Alpine.
+		userData += "  - [rc-update, add, cgroups, boot]\n"
+		userData += "  - [service, cgroups, start]\n"
+		userData += "  - [rc-update, add, docker, boot]\n"
+		userData += "  - [service, docker, start]\n"
+	}
+
+	goshipGroups := "wheel"
+	if config.InstallDocker {
+		goshipGroups = "wheel, docker"
+	}
+
 	userData += "users:\n"
 	userData += "  - default\n"
 	userData += "  - name: goship\n"
 	userData += "    shell: /bin/sh\n"
-	userData += "    groups: wheel\n"
+	userData += fmt.Sprintf("    groups: %s\n", goshipGroups)
 	userData += "    sudo: ALL=(ALL) NOPASSWD:ALL\n"
 	userData += "    lock_passwd: false\n"
 	userData += "    plain_text_passwd: goship\n"

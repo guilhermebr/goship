@@ -64,6 +64,7 @@ type CreateVMOptions struct {
 	Name           string
 	BaseImage      string
 	MemoryMB       int64
+	DiskMB         int64 // resize CoW overlay to this size (0 = inherit base image size)
 	CPUs           int
 	EnableKVM      bool
 	SecurityNone   bool
@@ -143,11 +144,19 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 		return nil, fmt.Errorf("failed to create disk image: %w", err)
 	}
 
+	// Resize CoW overlay so the guest has enough space for packages (e.g. Docker).
+	if opts.DiskMB > 0 {
+		size := fmt.Sprintf("%dM", opts.DiskMB)
+		cmd := exec.Command("qemu-img", "resize", disk, size)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("failed to resize disk to %s: %w\n%s", size, err, string(out))
+		}
+	}
+
 	if opts.ProvisionGuest {
 		if err := ProvisionGuestDisk(GuestProvisionOptions{
 			DiskPath:       disk,
 			InitBinaryPath: opts.InitBinaryPath,
-			InstallDocker:  opts.InstallDocker,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to provision guest disk: %w", err)
 		}
@@ -168,9 +177,10 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 			hostname = opts.Name
 		}
 		err := GenerateCloudInitISO(&CloudInitConfig{
-			InstanceID: uuid,
-			Hostname:   hostname,
-			SSHKey:     opts.SSHKey,
+			InstanceID:    uuid,
+			Hostname:      hostname,
+			SSHKey:        opts.SSHKey,
+			InstallDocker: opts.InstallDocker,
 		}, isoPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create cloud-init ISO: %w", err)
