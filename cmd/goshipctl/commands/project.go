@@ -78,13 +78,27 @@ var projectConsoleCmd = &cobra.Command{
 var (
 	logsLines  int
 	logsFollow bool
+	logsFile   string
 )
 
+// logAliases maps well-known names to log file paths inside the VM.
+var logAliases = map[string]string{
+	"cloud-init":  "/var/log/cloud-init-output.log",
+	"goship-init": "/var/log/goship-init.log",
+}
+
 var projectLogsCmd = &cobra.Command{
-	Use:   "logs <name>",
-	Short: "Show goship-init logs from the VM",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runProjectLogs,
+	Use:   "logs <name> [source]",
+	Short: "Show logs from the VM",
+	Long: `Show logs from the project VM.
+
+Log sources (positional argument):
+  goship-init   /var/log/goship-init.log (default)
+  cloud-init    /var/log/cloud-init-output.log
+
+Use --file to read an arbitrary log path under /var/log/.`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runProjectLogs,
 }
 
 var projectStopCmd = &cobra.Command{
@@ -131,6 +145,7 @@ func init() {
 
 	projectLogsCmd.Flags().IntVarP(&logsLines, "lines", "n", 100, "Number of log lines to show")
 	projectLogsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output (poll every 2s)")
+	projectLogsCmd.Flags().StringVar(&logsFile, "file", "", "Arbitrary log file path inside the VM (must be under /var/log/)")
 
 	projectUpdateInitCmd.Flags().StringVar(&updateInitBinary, "binary", "", "Path to goship-init binary (default: --goship-init flag value)")
 	projectUpdateInitCmd.Flags().BoolVar(&updateInitRestart, "restart", false, "Restart the VM after successful update")
@@ -167,7 +182,6 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	printVerbose("Project created with ID: %s", project.ID)
-	printVerbose("Starting VM...")
 
 	// Create VM instance via runtime.
 	instance, err := rt.CreateInstance(ctx, project)
@@ -346,6 +360,17 @@ func runProjectConsole(cmd *cobra.Command, args []string) error {
 func runProjectLogs(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
+	// Resolve log file: --file flag > positional alias > default (empty = agent default).
+	logFile := logsFile
+	if logFile == "" && len(args) > 1 {
+		alias := args[1]
+		if path, ok := logAliases[alias]; ok {
+			logFile = path
+		} else {
+			return fmt.Errorf("unknown log source %q (known: cloud-init, goship-init)", alias)
+		}
+	}
+
 	project, err := store.GetProject(name)
 	if err != nil {
 		return fmt.Errorf("project not found: %s", name)
@@ -371,8 +396,9 @@ func runProjectLogs(cmd *cobra.Command, args []string) error {
 		defer cancel()
 
 		resp, err := comm.SendCommand(ctx, &v1.InitCommand{
-			Action: v1.ActionLogs,
-			Lines:  logsLines,
+			Action:  v1.ActionLogs,
+			Lines:   logsLines,
+			LogFile: logFile,
 		})
 		if err != nil {
 			return "", fmt.Errorf("failed to get logs: %w", err)

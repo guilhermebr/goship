@@ -68,6 +68,7 @@ func init() {
 	rootCmd.AddCommand(vmCmd)
 	rootCmd.AddCommand(imageCmd)
 	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(appCmd)
 }
 
 // needsStore returns true if the command requires the state store.
@@ -76,7 +77,7 @@ func needsStore(cmd *cobra.Command) bool {
 	if cmd.Parent() != nil {
 		parent = cmd.Parent().Name()
 	}
-	return parent == "project"
+	return parent == "project" || parent == "app"
 }
 
 // needsRuntime returns true if the command requires the libvirt runtime.
@@ -86,11 +87,23 @@ func needsRuntime(cmd *cobra.Command) bool {
 		parent = cmd.Parent().Name()
 	}
 	name := cmd.Name()
-	// These project subcommands need the runtime for VM operations.
-	switch name {
-	case "create", "delete", "stop", "start", "restart", "update-init":
-		return parent == "project"
+
+	// App subcommands that talk to the VM need the runtime.
+	if parent == "app" {
+		switch name {
+		case "deploy", "stop", "delete":
+			return true
+		}
 	}
+
+	// Project subcommands that need the runtime for VM operations.
+	if parent == "project" {
+		switch name {
+		case "create", "delete", "stop", "start", "restart", "update-init":
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -116,6 +129,7 @@ func initResources(cmd *cobra.Command, args []string) error {
 		runtime.WithInitBinary(initBinaryPath),
 		runtime.WithProvisionGuest(!skipGuestProvision),
 		runtime.WithInstallDocker(installDocker),
+		runtime.WithProgressWriter(os.Stdout),
 	}
 	if projectNetworkType != "" {
 		source := projectNetworkSource
