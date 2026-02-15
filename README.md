@@ -88,6 +88,7 @@ The **[Design Document (RFC)](docs/DESIGN.md)** is the authoritative reference f
 - `libvirt-dev` / `libvirt-devel`
 - `qemu-system-x86_64`, `qemu-img`
 - `genisoimage` or `mkisofs` (for cloud-init ISO generation)
+- `libguestfs-tools` (for per-VM guest disk provisioning via `virt-customize`)
 - KVM-capable host (for `--enable-kvm`)
 
 ### Build
@@ -105,26 +106,30 @@ goshipctl version
 # Show host capabilities (CPU, memory, KVM, hugepages, confidential computing)
 goshipctl capabilities
 
-# Generate domain XML (offline, no libvirt needed)
-goshipctl generate-xml --name my-vm --memory 1024 --cpus 2
-
 # Download the Alpine base VM image
 goshipctl image pull
-
-# Or build a local plain base image (download + resize only)
-goshipctl image build
 
 # Build goship-init (in-guest agent)
 make build-goship-init
 
-# Create and start a VM (cloud-init + per-VM guest provisioning)
-goshipctl vm create my-vm --ssh-key ~/.ssh/id_ed25519.pub --goship-init ./bin/goship-init
+# Create a project (provisions a VM with Docker)
+goshipctl project create myproject --memory 1024 --cpu 2 --disk 4096
 
-# List VMs
-goshipctl vm list
+# Create and deploy an app
+goshipctl app create myproject nginx --image nginx:alpine --port 8080:80
+goshipctl app deploy myproject nginx
 
-# Destroy a VM
-goshipctl vm destroy --name my-vm
+# Check app status
+goshipctl app list myproject
+
+# View logs
+goshipctl project logs myproject
+goshipctl project logs myproject cloud-init
+
+# Stop and clean up
+goshipctl app stop myproject nginx
+goshipctl app delete myproject nginx
+goshipctl project delete myproject
 ```
 
 ---
@@ -227,6 +232,102 @@ Stops the VM, undefines it from libvirt, and removes its disk image.
 ### `goshipctl vm list`
 
 Lists all GoShip-managed VMs and their current state.
+
+### `goshipctl project create <name> [flags]`
+
+Creates a new project with its own isolated VM. Provisions the VM with cloud-init, installs Docker (if enabled), and injects goship-init.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cpu` | `1` | Number of CPU cores |
+| `--memory` | `512` | Memory in MB |
+| `--disk` | `4096` | Disk size in MB |
+| `--network-type` | | Network type (`network`, `bridge`, `user`) |
+| `--network-source` | | Network source name |
+
+### `goshipctl project list`
+
+Lists all projects with their VM state and IP address.
+
+### `goshipctl project info <name>`
+
+Shows detailed project information including VM status, resources, and IP address.
+
+### `goshipctl project delete <name>`
+
+Destroys the project's VM and removes the project from state.
+
+### `goshipctl project console <name>`
+
+Opens an interactive serial console to the project VM via `virsh console`.
+
+### `goshipctl project logs <name> [source] [flags]`
+
+Shows logs from the project VM.
+
+| Argument/Flag | Default | Description |
+|---------------|---------|-------------|
+| `source` | `goship-init` | Log source: `goship-init` or `cloud-init` |
+| `--file` | | Arbitrary log file path inside VM (must be under `/var/log/`) |
+| `-n, --lines` | `100` | Number of log lines to show |
+| `-f, --follow` | `false` | Follow log output (poll every 2s) |
+
+### `goshipctl project stop <name>`
+
+Gracefully stops the project VM (ACPI shutdown).
+
+### `goshipctl project start <name>`
+
+Starts a stopped project VM.
+
+### `goshipctl project restart <name>`
+
+Restarts a project VM (stop then start).
+
+### `goshipctl project update-init <name> [flags]`
+
+Pushes a new goship-init binary into a running VM over virtio-serial using a chunked transfer protocol.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--binary` | *(--goship-init value)* | Path to goship-init binary |
+| `--restart` | `false` | Restart the VM after successful update |
+
+### `goshipctl app create <project> <appname> [flags]`
+
+Creates an application definition in the project state store. Does not deploy — use `app deploy` to start it.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-m, --mode` | `container` | Execution mode: `container` or `process` |
+| `-i, --image` | | Container image (required for container mode) |
+| `-b, --binary` | | Binary path inside VM (required for process mode) |
+| `-p, --port` | | Port mapping `host:container` (repeatable) |
+| `-e, --env` | | Environment variable `KEY=VALUE` (repeatable) |
+| `--cpu` | `0` | CPU limit (cores) |
+| `--memory` | `0` | Memory limit in MB |
+| `-d, --description` | | App description |
+| `-g, --tag` | | Tags (repeatable) |
+
+### `goshipctl app deploy <project> <appname>`
+
+Deploys an application to the project VM. Sends the app spec over virtio-serial to the in-VM goship-init agent, which pulls the image (container mode) or starts the binary (process mode).
+
+### `goshipctl app list <project>`
+
+Lists all applications in a project with live status from the VM.
+
+### `goshipctl app info <project> <appname>`
+
+Shows detailed application info including configuration and live status from the VM.
+
+### `goshipctl app stop <project> <appname>`
+
+Stops a running application inside the project VM.
+
+### `goshipctl app delete <project> <appname>`
+
+Removes the application from the VM (best-effort) and deletes it from the state store.
 
 ---
 
