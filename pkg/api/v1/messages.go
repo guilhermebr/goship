@@ -14,7 +14,8 @@ const (
 	ActionStatus     = "status"
 	ActionPing       = "ping"
 	ActionLogs       = "logs"
-	ActionUpdateInit = "update-init"
+	ActionUpdateInit    = "update-init"
+	ActionUploadBinary = "upload-binary"
 )
 
 // Response status constants.
@@ -31,11 +32,12 @@ type InitCommand struct {
 	Lines   int                `json:"lines,omitempty"`
 	LogFile string             `json:"log_file,omitempty"` // Path to log file (default: goship-init.log)
 
-	// Fields for update-init chunked transfer protocol.
-	Phase    string `json:"phase,omitempty"`    // "begin", "data", "finish"
-	Data     string `json:"data,omitempty"`     // base64-encoded chunk (data phase)
-	Size     int64  `json:"size,omitempty"`     // total binary size in bytes (begin phase)
-	Checksum string `json:"checksum,omitempty"` // sha256 hex digest (begin phase)
+	// Fields for chunked transfer protocol (update-init, upload-binary).
+	Phase    string `json:"phase,omitempty"`     // "begin", "data", "finish"
+	Data     string `json:"data,omitempty"`      // base64-encoded chunk (data phase)
+	Size     int64  `json:"size,omitempty"`      // total binary size in bytes (begin phase)
+	Checksum string `json:"checksum,omitempty"`  // sha256 hex digest (begin phase)
+	FileName string `json:"file_name,omitempty"` // original filename for upload-binary
 }
 
 // InitResponse is the reply from the GoShip Init agent back to the host.
@@ -93,6 +95,7 @@ type AppStatus struct {
 	Status        string                  `json:"status"`
 	Ports         []entities.PortMapping  `json:"ports,omitempty"`
 	StartedAt     *time.Time              `json:"started_at,omitempty"`
+	RestartCount  int                     `json:"restart_count,omitempty"`
 }
 
 // ToContainerStatus converts AppStatus to ContainerStatus for backwards compatibility.

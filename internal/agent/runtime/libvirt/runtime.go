@@ -2,6 +2,7 @@ package libvirt
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -532,6 +533,111 @@ func (r *Runtime) ListInstances(ctx context.Context) ([]*entities.ProjectInstanc
 		instances = append(instances, info.instance)
 	}
 	return instances, nil
+}
+
+const uploadChunkSize = 512 * 1024 // 512KB
+
+// UploadBinary uploads a binary file into the VM for a specific app via virtio-serial.
+func (r *Runtime) UploadBinary(ctx context.Context, instanceID string, appName string, fileName string, reader io.Reader, size int64, checksum string) error {
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	comm, err := NewVMCommunicator(info.socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer comm.Close()
+
+	// Phase: begin
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action:   v1.ActionUploadBinary,
+		Phase:    "begin",
+		AppName:  appName,
+		FileName: fileName,
+		Size:     size,
+		Checksum: checksum,
+	})
+	if err != nil {
+		return fmt.Errorf("upload begin failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("upload begin error: %s", resp.Error)
+	}
+
+	// Phase: data (chunked transfer)
+	buf := make([]byte, uploadChunkSize)
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			encoded := base64.StdEncoding.EncodeToString(buf[:n])
+			resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+				Action: v1.ActionUploadBinary,
+				Phase:  "data",
+				Data:   encoded,
+			})
+			if err != nil {
+				return fmt.Errorf("upload data failed: %w", err)
+			}
+			if resp.Status != v1.StatusOK {
+				return fmt.Errorf("upload data error: %s", resp.Error)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("failed to read binary: %w", readErr)
+		}
+	}
+
+	// Phase: finish
+	resp, err = comm.SendCommand(ctx, &v1.InitCommand{
+		Action: v1.ActionUploadBinary,
+		Phase:  "finish",
+	})
+	if err != nil {
+		return fmt.Errorf("upload finish failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return fmt.Errorf("upload finish error: %s", resp.Error)
+	}
+
+	return nil
+}
+
+// GetAppLogs retrieves log output from an application inside a VM instance.
+func (r *Runtime) GetAppLogs(ctx context.Context, instanceID string, appName string, lines int) (string, error) {
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	comm, err := NewVMCommunicator(info.socketPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer comm.Close()
+
+	logFile := fmt.Sprintf("/var/log/goship-%s.log", appName)
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action:  v1.ActionLogs,
+		LogFile: logFile,
+		Lines:   lines,
+	})
+	if err != nil {
+		return "", fmt.Errorf("logs command failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return "", fmt.Errorf("logs error: %s", resp.Error)
+	}
+
+	return resp.Logs, nil
 }
 
 // StreamLogs streams logs from an application inside a VM instance.

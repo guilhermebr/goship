@@ -42,6 +42,12 @@ type ProjectRuntime interface {
 	// ListInstances returns all VM instances managed by this runtime.
 	ListInstances(ctx context.Context) ([]*entities.ProjectInstance, error)
 
+	// UploadBinary uploads a binary file into the VM for a specific app.
+	UploadBinary(ctx context.Context, instanceID string, appName string, fileName string, reader io.Reader, size int64, checksum string) error
+
+	// GetAppLogs retrieves log output from an application inside a VM instance.
+	GetAppLogs(ctx context.Context, instanceID string, appName string, lines int) (string, error)
+
 	// StreamLogs streams logs from an application inside a VM instance.
 	StreamLogs(ctx context.Context, instanceID string, appName string, follow bool) (io.ReadCloser, error)
 

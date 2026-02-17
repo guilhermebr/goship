@@ -91,7 +91,7 @@ func needsRuntime(cmd *cobra.Command) bool {
 	// App subcommands that talk to the VM need the runtime.
 	if parent == "app" {
 		switch name {
-		case "deploy", "stop", "delete":
+		case "deploy", "stop", "delete", "logs":
 			return true
 		}
 	}

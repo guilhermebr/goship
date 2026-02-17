@@ -2,7 +2,10 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,16 +27,23 @@ var appCmd = &cobra.Command{
 
 // Flags for app create.
 var (
-	appMode        string
-	appImage       string
-	appBinary      string
-	appPorts       []string
-	appReplicas    int
-	appEnv         []string
-	appCPU         float64
-	appMemory      int64
-	appDescription string
-	appTags        []string
+	appMode          string
+	appImage         string
+	appBinary        string
+	appPorts         []string
+	appReplicas      int
+	appEnv           []string
+	appCPU           float64
+	appMemory        int64
+	appDescription   string
+	appTags          []string
+	appRestartPolicy string
+)
+
+// Flags for app logs.
+var (
+	appLogLines  int
+	appLogFollow bool
 )
 
 var appCreateCmd = &cobra.Command{
@@ -81,6 +91,13 @@ var appDeleteCmd = &cobra.Command{
 	RunE:    runAppDelete,
 }
 
+var appLogsCmd = &cobra.Command{
+	Use:   "logs <project> <appname>",
+	Short: "View application logs",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runAppLogs,
+}
+
 func init() {
 	appCreateCmd.Flags().StringVarP(&appMode, "mode", "m", "container", "Execution mode: container or process")
 	appCreateCmd.Flags().StringVarP(&appImage, "image", "i", "", "Container image (required for container mode)")
@@ -92,6 +109,10 @@ func init() {
 	appCreateCmd.Flags().Int64Var(&appMemory, "memory", 0, "Memory limit in MB")
 	appCreateCmd.Flags().StringVarP(&appDescription, "description", "d", "", "App description")
 	appCreateCmd.Flags().StringArrayVarP(&appTags, "tag", "g", nil, "Tags (repeatable)")
+	appCreateCmd.Flags().StringVar(&appRestartPolicy, "restart-policy", "never", "Restart policy: never, always, or on-failure")
+
+	appLogsCmd.Flags().IntVarP(&appLogLines, "lines", "n", 100, "Number of log lines to show")
+	appLogsCmd.Flags().BoolVarP(&appLogFollow, "follow", "f", false, "Follow log output (poll every 2s)")
 
 	appCmd.AddCommand(appCreateCmd)
 	appCmd.AddCommand(appDeployCmd)
@@ -99,6 +120,7 @@ func init() {
 	appCmd.AddCommand(appInfoCmd)
 	appCmd.AddCommand(appStopCmd)
 	appCmd.AddCommand(appDeleteCmd)
+	appCmd.AddCommand(appLogsCmd)
 }
 
 func runAppCreate(cmd *cobra.Command, args []string) error {
@@ -127,6 +149,15 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("app '%s' already exists in project '%s'", appName, projectName)
 	}
 
+	// Validate restart policy.
+	restartPolicy := entities.RestartPolicy(appRestartPolicy)
+	switch restartPolicy {
+	case entities.RestartPolicyNever, entities.RestartPolicyAlways, entities.RestartPolicyOnFailure:
+		// valid
+	default:
+		return fmt.Errorf("invalid restart policy: %s (must be 'never', 'always', or 'on-failure')", appRestartPolicy)
+	}
+
 	// Parse port mappings.
 	ports, err := parsePorts(appPorts)
 	if err != nil {
@@ -148,9 +179,10 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 			CPU:      appCPU,
 			MemoryMB: appMemory,
 		},
-		Description: appDescription,
-		Tags:        appTags,
-		CreatedAt:   time.Now(),
+		RestartPolicy: restartPolicy,
+		Description:   appDescription,
+		Tags:          appTags,
+		CreatedAt:     time.Now(),
 	}
 
 	if err := store.SetApp(project.ID, app); err != nil {
@@ -195,13 +227,57 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 
 	rt.LoadInstance(instance)
 
+	out := cmd.OutOrStdout()
+
+	// For process mode, auto-upload local binary if it exists on the host.
+	if app.IsProcessMode() && app.Binary != "" {
+		if _, statErr := os.Stat(app.Binary); statErr == nil {
+			fmt.Fprintf(out, "Uploading binary '%s' to VM...\n", app.Binary)
+
+			f, openErr := os.Open(app.Binary)
+			if openErr != nil {
+				return fmt.Errorf("failed to open binary %s: %w", app.Binary, openErr)
+			}
+			defer f.Close()
+
+			stat, statErr := f.Stat()
+			if statErr != nil {
+				return fmt.Errorf("failed to stat binary: %w", statErr)
+			}
+
+			// Compute SHA256 checksum.
+			h := sha256.New()
+			if _, copyErr := io.Copy(h, f); copyErr != nil {
+				return fmt.Errorf("failed to compute checksum: %w", copyErr)
+			}
+			checksum := fmt.Sprintf("%x", h.Sum(nil))
+
+			// Seek back to beginning.
+			if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+				return fmt.Errorf("failed to seek binary: %w", seekErr)
+			}
+
+			fileName := filepath.Base(app.Binary)
+			if uploadErr := rt.UploadBinary(ctx, instance.ID, appName, fileName, f, stat.Size(), checksum); uploadErr != nil {
+				return fmt.Errorf("failed to upload binary: %w", uploadErr)
+			}
+
+			// Update binary path to the VM-side location.
+			app.Binary = fmt.Sprintf("/opt/goship/binaries/%s/%s", appName, fileName)
+			if err := store.SetApp(project.ID, app); err != nil {
+				return fmt.Errorf("failed to update app state: %w", err)
+			}
+
+			fmt.Fprintf(out, "  Uploaded: %s (%d bytes, sha256: %s)\n", fileName, stat.Size(), checksum)
+		}
+	}
+
 	printVerbose("Deploying app '%s' to project '%s'...", appName, projectName)
 
 	if err := rt.DeployApp(ctx, instance.ID, app); err != nil {
 		return fmt.Errorf("failed to deploy app: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "App '%s' deployed successfully in project '%s'\n", appName, projectName)
 	if app.IsContainerMode() {
 		fmt.Fprintf(out, "  Image: %s\n", app.Image)
@@ -289,6 +365,10 @@ func runAppInfo(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(out, "  Replicas: %d\n", app.Replicas)
 
+	if app.RestartPolicy != "" {
+		fmt.Fprintf(out, "  Restart:  %s\n", app.RestartPolicy)
+	}
+
 	if len(app.Ports) > 0 {
 		fmt.Fprintf(out, "  Ports:    %s\n", formatPorts(app.Ports))
 	}
@@ -325,6 +405,9 @@ func runAppInfo(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(out, "  State:  %s\n", s.State)
 		fmt.Fprintf(out, "  ID:     %s\n", s.ID)
 		fmt.Fprintf(out, "  Status: %s\n", s.Status)
+		if s.RestartCount > 0 {
+			fmt.Fprintf(out, "  Restarts: %d\n", s.RestartCount)
+		}
 		if s.StartedAt != nil {
 			fmt.Fprintf(out, "  Started: %s\n", s.StartedAt.Format(time.RFC3339))
 		}
@@ -466,6 +549,68 @@ func parseEnv(envStrs []string) map[string]string {
 		}
 	}
 	return env
+}
+
+func runAppLogs(cmd *cobra.Command, args []string) error {
+	projectName, appName := args[0], args[1]
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(projectName)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", projectName)
+	}
+
+	if app := store.GetApp(project.ID, appName); app == nil {
+		return fmt.Errorf("app '%s' not found in project '%s'", appName, projectName)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project '%s'", projectName)
+	}
+
+	rt.LoadInstance(instance)
+
+	out := cmd.OutOrStdout()
+
+	logs, err := rt.GetAppLogs(ctx, instance.ID, appName, appLogLines)
+	if err != nil {
+		return fmt.Errorf("failed to get app logs: %w", err)
+	}
+	fmt.Fprint(out, logs)
+	if logs != "" && !strings.HasSuffix(logs, "\n") {
+		fmt.Fprintln(out)
+	}
+
+	if !appLogFollow {
+		return nil
+	}
+
+	// Follow mode: poll every 2s, print new content.
+	previousLen := len(logs)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			newLogs, err := rt.GetAppLogs(ctx, instance.ID, appName, appLogLines)
+			if err != nil {
+				continue
+			}
+			if len(newLogs) > previousLen {
+				newContent := newLogs[previousLen:]
+				fmt.Fprint(out, newContent)
+				if !strings.HasSuffix(newContent, "\n") {
+					fmt.Fprintln(out)
+				}
+				previousLen = len(newLogs)
+			}
+		}
+	}
 }
 
 // formatPorts formats port mappings for display.

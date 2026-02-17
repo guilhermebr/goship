@@ -115,15 +115,22 @@ make build-goship-init
 # Create a project (provisions a VM with Docker)
 goshipctl project create myproject --memory 1024 --cpu 2 --disk 4096
 
-# Create and deploy an app
+# Create and deploy a container app
 goshipctl app create myproject nginx --image nginx:alpine --port 8080:80
 goshipctl app deploy myproject nginx
 
+# Create and deploy a process app (binary auto-uploaded to VM)
+goshipctl app create myproject myapi --mode process --binary ./bin/myapi --port 3000:3000 --restart-policy always
+goshipctl app deploy myproject myapi
+
 # Check app status
 goshipctl app list myproject
+goshipctl app info myproject nginx
 
 # View logs
-goshipctl project logs myproject
+goshipctl app logs myproject myapi
+goshipctl app logs myproject myapi -f          # follow mode
+goshipctl project logs myproject               # VM-level logs
 goshipctl project logs myproject cloud-init
 
 # Stop and clean up
@@ -308,10 +315,13 @@ Creates an application definition in the project state store. Does not deploy â€
 | `--memory` | `0` | Memory limit in MB |
 | `-d, --description` | | App description |
 | `-g, --tag` | | Tags (repeatable) |
+| `--restart-policy` | `never` | Restart policy: `never`, `always`, or `on-failure` |
 
 ### `goshipctl app deploy <project> <appname>`
 
 Deploys an application to the project VM. Sends the app spec over virtio-serial to the in-VM goship-init agent, which pulls the image (container mode) or starts the binary (process mode).
+
+For process mode apps with a local binary path, `deploy` automatically uploads the binary to the VM (chunked transfer with SHA256 verification) before starting it.
 
 ### `goshipctl app list <project>`
 
@@ -328,6 +338,15 @@ Stops a running application inside the project VM.
 ### `goshipctl app delete <project> <appname>`
 
 Removes the application from the VM (best-effort) and deletes it from the state store.
+
+### `goshipctl app logs <project> <appname> [flags]`
+
+Shows application logs from the project VM. For process mode apps, reads from per-process log files (`/var/log/goship-<appname>.log`). For container mode apps, reads Docker container logs.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-n, --lines` | `100` | Number of log lines to show |
+| `-f, --follow` | `false` | Follow log output (poll every 2s) |
 
 ---
 

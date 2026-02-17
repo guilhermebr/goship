@@ -27,6 +27,8 @@ const (
 	DefaultLogLines = 100
 	// DefaultInitDir is the directory where goship-init binary lives inside the VM.
 	DefaultInitDir = "/opt/goship"
+	// DefaultBinariesDir is where uploaded app binaries are stored inside the VM.
+	DefaultBinariesDir = "/opt/goship/binaries"
 )
 
 // updateState tracks an in-progress binary update transfer.
@@ -35,6 +37,16 @@ type updateState struct {
 	totalSize int64
 	checksum  string // expected sha256 hex
 	received  int64
+}
+
+// uploadState tracks an in-progress binary upload transfer.
+type uploadState struct {
+	tmpFile  *os.File
+	destDir  string // e.g., /opt/goship/binaries/<appName>/
+	fileName string // sanitized original filename
+	size     int64
+	checksum string // expected sha256 hex
+	received int64
 }
 
 // Init is the GoShip Init agent orchestrator.
@@ -48,6 +60,7 @@ type Init struct {
 	cancel   context.CancelFunc
 	initDir  string       // directory where goship-init binary lives
 	update   *updateState // in-progress update transfer (nil when idle)
+	upload   *uploadState // in-progress binary upload transfer (nil when idle)
 }
 
 // New creates a new Init agent with the given serial device path.
@@ -101,6 +114,7 @@ func newFromCommunicatorWithDir(comm *Communicator, initDir string) *Init {
 	comm.RegisterHandler(v1.ActionStatus, i.handleStatus)
 	comm.RegisterHandler(v1.ActionLogs, i.handleLogs)
 	comm.RegisterHandler(v1.ActionUpdateInit, i.handleUpdateInit)
+	comm.RegisterHandler(v1.ActionUploadBinary, i.handleUploadBinary)
 
 	return i
 }
@@ -527,6 +541,180 @@ func (i *Init) cleanupUpdate() {
 	i.update.tmpFile.Close()
 	os.Remove(tmpPath)
 	i.update = nil
+}
+
+func (i *Init) handleUploadBinary(cmd *v1.InitCommand) *v1.InitResponse {
+	switch cmd.Phase {
+	case "begin":
+		return i.handleUploadBegin(cmd)
+	case "data":
+		return i.handleUploadData(cmd)
+	case "finish":
+		return i.handleUploadFinish(cmd)
+	default:
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("unknown upload phase: %s", cmd.Phase),
+		}
+	}
+}
+
+func (i *Init) handleUploadBegin(cmd *v1.InitCommand) *v1.InitResponse {
+	if cmd.AppName == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "app_name is required"}
+	}
+	if cmd.FileName == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "file_name is required"}
+	}
+	if cmd.Size <= 0 {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "size must be positive"}
+	}
+	if cmd.Checksum == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "checksum is required"}
+	}
+
+	// Sanitize filename: no slashes, no path traversal.
+	fileName := filepath.Base(cmd.FileName)
+	if fileName == "." || fileName == ".." || strings.Contains(fileName, "/") || strings.Contains(fileName, "\\") {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "invalid file name"}
+	}
+
+	// Sanitize app name.
+	appName := filepath.Base(cmd.AppName)
+	if appName == "." || appName == ".." {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "invalid app name"}
+	}
+
+	// Cancel any previous in-progress upload.
+	i.cleanupUpload()
+
+	// Create destination directory.
+	destDir := filepath.Join(DefaultBinariesDir, appName)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to create directory %s: %v", destDir, err),
+		}
+	}
+
+	tmpPath := filepath.Join(destDir, fileName+".new")
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to create temp file: %v", err),
+		}
+	}
+
+	i.upload = &uploadState{
+		tmpFile:  f,
+		destDir:  destDir,
+		fileName: fileName,
+		size:     cmd.Size,
+		checksum: cmd.Checksum,
+	}
+
+	log.Printf("goship-init: upload-binary begin, app=%s file=%s size=%d", appName, fileName, cmd.Size)
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+func (i *Init) handleUploadData(cmd *v1.InitCommand) *v1.InitResponse {
+	if i.upload == nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "no upload in progress (send begin first)"}
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(cmd.Data)
+	if err != nil {
+		i.cleanupUpload()
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to decode data: %v", err),
+		}
+	}
+
+	n, err := i.upload.tmpFile.Write(decoded)
+	if err != nil {
+		i.cleanupUpload()
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to write data: %v", err),
+		}
+	}
+
+	i.upload.received += int64(n)
+
+	return &v1.InitResponse{
+		Status:        v1.StatusOK,
+		BytesReceived: i.upload.received,
+	}
+}
+
+func (i *Init) handleUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
+	if i.upload == nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "no upload in progress (send begin first)"}
+	}
+
+	tmpPath := i.upload.tmpFile.Name()
+	expectedChecksum := i.upload.checksum
+	destPath := filepath.Join(i.upload.destDir, i.upload.fileName)
+
+	if err := i.upload.tmpFile.Close(); err != nil {
+		i.upload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to close temp file: %v", err),
+		}
+	}
+
+	// Compute SHA256.
+	actualChecksum, err := fileSHA256(tmpPath)
+	if err != nil {
+		i.upload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to compute checksum: %v", err),
+		}
+	}
+
+	if actualChecksum != expectedChecksum {
+		i.upload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum),
+		}
+	}
+
+	// Rename .new to final destination.
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		i.upload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to install binary: %v", err),
+		}
+	}
+
+	if err := os.Chmod(destPath, 0755); err != nil {
+		log.Printf("goship-init: warning: chmod failed: %v", err)
+	}
+
+	i.upload = nil
+	log.Printf("goship-init: upload-binary complete, binary at %s", destPath)
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+// cleanupUpload cancels any in-progress upload transfer.
+func (i *Init) cleanupUpload() {
+	if i.upload == nil {
+		return
+	}
+	tmpPath := i.upload.tmpFile.Name()
+	i.upload.tmpFile.Close()
+	os.Remove(tmpPath)
+	i.upload = nil
 }
 
 // fileSHA256 computes the SHA256 hex digest of a file.
