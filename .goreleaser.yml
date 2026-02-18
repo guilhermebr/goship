@@ -1,0 +1,98 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: goshipctl
+    main: ./cmd/goshipctl
+    binary: goshipctl
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.BuildTime={{.Date}}
+
+  - id: goship-init
+    main: ./cmd/goship-init
+    binary: goship-init
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.BuildTime={{.Date}}
+
+archives:
+  - id: goshipctl-archive
+    ids:
+      - goshipctl
+    name_template: "goshipctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - README.md
+      - LICENSE
+      - docs/*
+
+  - id: goship-init-archive
+    ids:
+      - goship-init
+    name_template: "goship-init_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: guilhermebr
+    name: goship
+  draft: false
+  prerelease: auto
+  header: |
+    ## GoShip {{ .Version }}
+
+    VM-centric application control plane built on KVM/QEMU/Libvirt.
+
+    ### Prerequisites
+    - Linux with KVM support
+    - libvirt (`apt install libvirt-daemon-system libvirt-dev`)
+    - QEMU (`apt install qemu-system-x86`)
+    - libguestfs-tools (`apt install libguestfs-tools`)
+
+    ### Install
+    ```bash
+    tar xzf goshipctl_{{ .Version }}_linux_amd64.tar.gz
+    sudo mv goshipctl /usr/local/bin/
+    tar xzf goship-init_{{ .Version }}_linux_amd64.tar.gz
+    sudo mv goship-init /usr/local/bin/
+    ```

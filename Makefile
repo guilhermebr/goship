@@ -1,7 +1,7 @@
 # GoShip Makefile
 
 .PHONY: all build clean test lint fmt vet tidy help install uninstall
-.PHONY: build-goshipctl build-goship-init
+.PHONY: build-goshipctl build-goship-init release-local release-check
 
 # Go parameters
 GOCMD=go
@@ -97,6 +97,16 @@ uninstall:
 	rm -f $(BINDIR)/$(GOSHIP_INIT)
 	@echo "GoShip uninstalled."
 
+# GoReleaser: local snapshot release (dry run)
+release-local:
+	@echo "Building local snapshot release..."
+	goreleaser release --snapshot --clean
+
+# GoReleaser: validate config
+release-check:
+	@echo "Validating .goreleaser.yml..."
+	goreleaser check
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
@@ -121,6 +131,8 @@ help:
 	@echo "  install          - Build and install to $(PREFIX)/bin"
 	@echo "  uninstall        - Remove installed binaries"
 	@echo "  clean            - Clean build artifacts"
+	@echo "  release-local    - Build snapshot release locally (dry run)"
+	@echo "  release-check    - Validate .goreleaser.yml config"
 	@echo "  help             - Show this help"
 	@echo ""
 	@echo "Variables:"
