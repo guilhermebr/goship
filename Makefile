@@ -1,6 +1,6 @@
 # GoShip Makefile
 
-.PHONY: all build clean test lint fmt vet tidy help
+.PHONY: all build clean test lint fmt vet tidy help install uninstall
 .PHONY: build-goshipctl build-goship-init
 
 # Go parameters
@@ -19,6 +19,10 @@ GOSHIP_INIT=goship-init
 # Build directories
 BUILD_DIR=bin
 CMD_DIR=cmd
+
+# Install directories
+PREFIX ?= /usr/local
+BINDIR = $(PREFIX)/bin
 
 # Version info
 VERSION ?= dev
@@ -76,6 +80,23 @@ tidy:
 	@echo "Tidying dependencies..."
 	$(GOMOD) tidy
 
+# Install binaries to system path
+install: build
+	@echo "Installing GoShip to $(BINDIR)..."
+	install -d $(BINDIR)
+	install -m 755 $(BUILD_DIR)/$(GOSHIPCTL) $(BINDIR)/$(GOSHIPCTL)
+	install -m 755 $(BUILD_DIR)/$(GOSHIP_INIT) $(BINDIR)/$(GOSHIP_INIT)
+	@echo "GoShip installed successfully."
+	@echo "  $(BINDIR)/$(GOSHIPCTL)"
+	@echo "  $(BINDIR)/$(GOSHIP_INIT)"
+
+# Remove installed binaries
+uninstall:
+	@echo "Removing GoShip from $(BINDIR)..."
+	rm -f $(BINDIR)/$(GOSHIPCTL)
+	rm -f $(BINDIR)/$(GOSHIP_INIT)
+	@echo "GoShip uninstalled."
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
@@ -97,5 +118,11 @@ help:
 	@echo "  vet              - Vet code"
 	@echo "  lint             - Lint code"
 	@echo "  tidy             - Tidy dependencies"
+	@echo "  install          - Build and install to $(PREFIX)/bin"
+	@echo "  uninstall        - Remove installed binaries"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  help             - Show this help"
+	@echo ""
+	@echo "Variables:"
+	@echo "  VERSION          - Release version (default: dev)"
+	@echo "  PREFIX           - Install prefix (default: /usr/local)"
