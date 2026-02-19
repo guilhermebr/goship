@@ -194,7 +194,7 @@ func (r *Runtime) CreateInstance(ctx context.Context, project *entities.Project)
 		r.mu.Lock()
 		delete(r.instances, instanceID)
 		r.mu.Unlock()
-		mgr.Destroy(project.Name, false)
+		_, _ = mgr.Destroy(project.Name, false)
 		return nil, fmt.Errorf("VM failed to become ready: %w", err)
 	}
 	r.mu.Lock()
@@ -261,7 +261,7 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 			continue
 		}
 		state, _, err := domain.GetState()
-		domain.Free()
+		_ = domain.Free()
 		if err != nil || state != libvirt.DOMAIN_RUNNING {
 			continue
 		}
@@ -366,7 +366,7 @@ func (r *Runtime) StopInstance(ctx context.Context, instanceID string) error {
 	if err != nil {
 		return fmt.Errorf("domain not found: %w", err)
 	}
-	defer domain.Free()
+	defer func() { _ = domain.Free() }()
 
 	if err := domain.Shutdown(); err != nil {
 		return fmt.Errorf("failed to shutdown domain: %w", err)
@@ -398,7 +398,7 @@ func (r *Runtime) StartInstance(ctx context.Context, instanceID string) error {
 	if err != nil {
 		return fmt.Errorf("domain not found: %w", err)
 	}
-	defer domain.Free()
+	defer func() { _ = domain.Free() }()
 
 	if err := domain.Create(); err != nil {
 		return fmt.Errorf("failed to start domain: %w", err)
@@ -515,7 +515,7 @@ func (r *Runtime) GetInstanceStatus(ctx context.Context, instanceID string) (*en
 			if err == nil {
 				info.instance.State = mapLibvirtState(state)
 			}
-			domain.Free()
+			_ = domain.Free()
 		}
 	}
 

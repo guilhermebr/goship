@@ -127,7 +127,7 @@ func TestListenPing(t *testing.T) {
 	data = append(data, '\n')
 
 	go func() {
-		hostWriter.Write(data)
+		_, _ = hostWriter.Write(data)
 		// Close to signal EOF and end Listen loop.
 		hostWriter.Close()
 	}()
@@ -162,7 +162,7 @@ func TestListenInvalidJSON(t *testing.T) {
 	comm, hostWriter, hostReader := newTestPipes(t)
 
 	go func() {
-		hostWriter.Write([]byte("not json\n"))
+		_, _ = hostWriter.Write([]byte("not json\n"))
 		hostWriter.Close()
 	}()
 
@@ -202,7 +202,7 @@ func TestListenUnknownAction(t *testing.T) {
 	data = append(data, '\n')
 
 	go func() {
-		hostWriter.Write(data)
+		_, _ = hostWriter.Write(data)
 		hostWriter.Close()
 	}()
 
@@ -246,8 +246,8 @@ func TestListenMultipleCommands(t *testing.T) {
 	status, _ := json.Marshal(v1.InitCommand{Action: v1.ActionStatus})
 
 	go func() {
-		hostWriter.Write(append(ping, '\n'))
-		hostWriter.Write(append(status, '\n'))
+		_, _ = hostWriter.Write(append(ping, '\n'))
+		_, _ = hostWriter.Write(append(status, '\n'))
 		hostWriter.Close()
 	}()
 

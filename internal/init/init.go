@@ -515,7 +515,7 @@ func (i *Init) handleUpdateFinish(_ *v1.InitCommand) *v1.InitResponse {
 	// Rename .new to current.
 	if err := os.Rename(tmpPath, currentPath); err != nil {
 		// Try to restore from .old.
-		os.Rename(oldPath, currentPath)
+		_ = os.Rename(oldPath, currentPath)
 		i.update = nil
 		return &v1.InitResponse{
 			Status: v1.StatusError,

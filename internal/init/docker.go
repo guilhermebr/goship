@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
@@ -50,7 +51,7 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 		return fmt.Errorf("failed to pull image %s: %w", imageRef, err)
 	}
 	defer reader.Close()
-	io.Copy(io.Discard, reader) // Wait for pull to complete.
+	_, _ = io.Copy(io.Discard, reader) // Wait for pull to complete.
 
 	// Build container config.
 	containerConfig := &container.Config{
@@ -145,7 +146,7 @@ func (m *DockerManager) Stop(ctx context.Context, appName string) error {
 	timeout := 30
 
 	if err := m.client.ContainerStop(ctx, containerName, container.StopOptions{Timeout: &timeout}); err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to stop container: %w", err)
@@ -158,7 +159,7 @@ func (m *DockerManager) Remove(ctx context.Context, appName string) error {
 	containerName := fmt.Sprintf("goship-%s", appName)
 
 	if err := m.client.ContainerRemove(ctx, containerName, container.RemoveOptions{Force: true}); err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to remove container: %w", err)

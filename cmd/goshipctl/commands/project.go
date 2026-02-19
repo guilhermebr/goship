@@ -187,7 +187,7 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 	instance, err := rt.CreateInstance(ctx, project)
 	if err != nil {
 		// Cleanup on failure.
-		store.DeleteProject(project.ID)
+		_ = store.DeleteProject(project.ID)
 		return fmt.Errorf("failed to create VM: %w", err)
 	}
 

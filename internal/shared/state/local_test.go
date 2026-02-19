@@ -130,7 +130,7 @@ func TestGetProject_ByID(t *testing.T) {
 func TestGetProject_ByName(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.CreateProject("findme", entities.RuntimeQEMU, entities.Resources{})
+	_, _ = store.CreateProject("findme", entities.RuntimeQEMU, entities.Resources{})
 
 	got, err := store.GetProject("findme")
 	if err != nil {
@@ -153,8 +153,8 @@ func TestGetProject_NotFound(t *testing.T) {
 func TestListProjects(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.CreateProject("a", entities.RuntimeQEMU, entities.Resources{})
-	store.CreateProject("b", entities.RuntimeQEMU, entities.Resources{})
+	_, _ = store.CreateProject("a", entities.RuntimeQEMU, entities.Resources{})
+	_, _ = store.CreateProject("b", entities.RuntimeQEMU, entities.Resources{})
 
 	projects := store.ListProjects()
 	if len(projects) != 2 {
@@ -220,7 +220,7 @@ func TestDeleteProject_ByID(t *testing.T) {
 func TestDeleteProject_ByName(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.CreateProject("del-by-name", entities.RuntimeQEMU, entities.Resources{})
+	_, _ = store.CreateProject("del-by-name", entities.RuntimeQEMU, entities.Resources{})
 
 	err := store.DeleteProject("del-by-name")
 	if err != nil {
@@ -248,17 +248,17 @@ func TestDeleteProject_CleansUpInstancesAndApps(t *testing.T) {
 	project, _ := store.CreateProject("cleanup", entities.RuntimeQEMU, entities.Resources{})
 
 	// Add an instance
-	store.SetInstance(&entities.ProjectInstance{
+	_ = store.SetInstance(&entities.ProjectInstance{
 		ID:        project.ID,
 		ProjectID: project.ID,
 		State:     entities.InstanceStateRunning,
 	})
 
 	// Add an app
-	store.SetApp(project.ID, &entities.AppSpec{Name: "web"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "web"})
 
 	// Delete the project
-	store.DeleteProject(project.ID)
+	_ = store.DeleteProject(project.ID)
 
 	if inst := store.GetInstance(project.ID); inst != nil {
 		t.Error("expected instance to be cleaned up")
@@ -306,7 +306,7 @@ func TestGetInstanceByID(t *testing.T) {
 		ProjectID: "some-project",
 		State:     entities.InstanceStateRunning,
 	}
-	store.SetInstance(instance)
+	_ = store.SetInstance(instance)
 
 	got := store.GetInstanceByID("lookup-me")
 	if got == nil {
@@ -334,7 +334,7 @@ func TestUpdateInstance(t *testing.T) {
 		ProjectID: "proj",
 		State:     entities.InstanceStateRunning,
 	}
-	store.SetInstance(instance)
+	_ = store.SetInstance(instance)
 
 	instance.State = entities.InstanceStateStopped
 	instance.IPAddress = "10.0.0.1"
@@ -367,7 +367,7 @@ func TestUpdateInstance_NotFound(t *testing.T) {
 func TestDeleteInstance(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.SetInstance(&entities.ProjectInstance{
+	_ = store.SetInstance(&entities.ProjectInstance{
 		ID:        "del-inst",
 		ProjectID: "proj",
 		State:     entities.InstanceStateRunning,
@@ -422,8 +422,8 @@ func TestGetApps(t *testing.T) {
 
 	project, _ := store.CreateProject("multi-app", entities.RuntimeQEMU, entities.Resources{})
 
-	store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx"})
-	store.SetApp(project.ID, &entities.AppSpec{Name: "api", Image: "myapi"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "api", Image: "myapi"})
 
 	apps := store.GetApps(project.ID)
 	if len(apps) != 2 {
@@ -444,7 +444,7 @@ func TestDeleteApp(t *testing.T) {
 	store := setupTestStore(t)
 
 	project, _ := store.CreateProject("del-app", entities.RuntimeQEMU, entities.Resources{})
-	store.SetApp(project.ID, &entities.AppSpec{Name: "doomed"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "doomed"})
 
 	err := store.DeleteApp(project.ID, "doomed")
 	if err != nil {
@@ -461,8 +461,8 @@ func TestSetApp_UpdateExisting(t *testing.T) {
 
 	project, _ := store.CreateProject("update-app", entities.RuntimeQEMU, entities.Resources{})
 
-	store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:1.0"})
-	store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:2.0"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:1.0"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:2.0"})
 
 	got := store.GetApp(project.ID, "web")
 	if got.Image != "nginx:2.0" {
@@ -481,12 +481,12 @@ func TestPersistence_AcrossReloads(t *testing.T) {
 	// Phase 1: Create data
 	store1, _ := NewStore(dir)
 	project, _ := store1.CreateProject("persistent", entities.RuntimeQEMU, entities.Resources{CPU: 2})
-	store1.SetInstance(&entities.ProjectInstance{
+	_ = store1.SetInstance(&entities.ProjectInstance{
 		ID:        "inst-p",
 		ProjectID: project.ID,
 		State:     entities.InstanceStateRunning,
 	})
-	store1.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx"})
+	_ = store1.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx"})
 
 	// Phase 2: Reload and verify
 	store2, _ := NewStore(dir)

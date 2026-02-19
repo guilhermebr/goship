@@ -37,8 +37,8 @@ func TestProjectList_Empty(t *testing.T) {
 func TestProjectList_WithProjects(t *testing.T) {
 	setupTestState(t)
 
-	store.CreateProject("web-app", entities.RuntimeQEMU, entities.Resources{CPU: 2, MemoryMB: 1024})
-	store.CreateProject("api-svc", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	_, _ = store.CreateProject("web-app", entities.RuntimeQEMU, entities.Resources{CPU: 2, MemoryMB: 1024})
+	_, _ = store.CreateProject("api-svc", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
 
 	buf := new(bytes.Buffer)
 	projectListCmd.SetOut(buf)
@@ -106,7 +106,7 @@ func TestProjectInfo_WithInstance(t *testing.T) {
 	setupTestState(t)
 
 	project, _ := store.CreateProject("inst-proj", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
-	store.SetInstance(&entities.ProjectInstance{
+	_ = store.SetInstance(&entities.ProjectInstance{
 		ID:         "inst-123",
 		ProjectID:  project.ID,
 		State:      entities.InstanceStateRunning,
@@ -136,8 +136,8 @@ func TestProjectInfo_WithApps(t *testing.T) {
 	setupTestState(t)
 
 	project, _ := store.CreateProject("app-proj", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
-	store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:alpine"})
-	store.SetApp(project.ID, &entities.AppSpec{Name: "worker", ExecutionMode: entities.ExecutionModeProcess, Binary: "/usr/bin/worker"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:alpine"})
+	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "worker", ExecutionMode: entities.ExecutionModeProcess, Binary: "/usr/bin/worker"})
 
 	buf := new(bytes.Buffer)
 	projectInfoCmd.SetOut(buf)
