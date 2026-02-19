@@ -10,6 +10,8 @@ builds:
     binary: goshipctl
     env:
       - CGO_ENABLED=1
+    tags:
+      - libvirt_dlopen
     goos:
       - linux
     goarch:

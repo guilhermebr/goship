@@ -41,7 +41,7 @@ build: build-goshipctl build-goship-init
 build-goshipctl:
 	@echo "Building $(GOSHIPCTL)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(GOSHIPCTL) ./$(CMD_DIR)/$(GOSHIPCTL)
+	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIPCTL) ./$(CMD_DIR)/$(GOSHIPCTL)
 
 # Build goship-init (static binary for use inside VMs)
 build-goship-init:
