@@ -91,8 +91,13 @@ release:
 
     ### Install
     ```bash
+    curl -fsSL https://raw.githubusercontent.com/guilhermebr/goship/main/scripts/install.sh | bash
+    ```
+
+    Or manually:
+    ```bash
     tar xzf goshipctl_{{ .Version }}_linux_amd64.tar.gz
     sudo mv goshipctl /usr/local/bin/
     tar xzf goship-init_{{ .Version }}_linux_amd64.tar.gz
-    sudo mv goship-init /usr/local/bin/
+    mkdir -p ~/.goship/bin && mv goship-init ~/.goship/bin/
     ```

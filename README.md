@@ -65,12 +65,31 @@ GoShip is built around a simple model:
 
 ---
 
+## Install
+
+```bash
+# Install latest release (includes system dependencies)
+curl -fsSL https://raw.githubusercontent.com/guilhermebr/goship/main/scripts/install.sh | bash
+
+# Install specific version
+curl -fsSL https://raw.githubusercontent.com/guilhermebr/goship/main/scripts/install.sh | GOSHIP_VERSION=v0.1.0 bash
+
+# Skip system deps if already installed
+curl -fsSL https://raw.githubusercontent.com/guilhermebr/goship/main/scripts/install.sh | GOSHIP_SKIP_DEPS=true bash
+```
+
+Or build from source:
+
+```bash
+make build
+sudo make install
+```
+
+---
+
 ## Quick Start
 
 ```bash
-# Build
-make build
-
 # Download base VM image
 goshipctl image pull
 
