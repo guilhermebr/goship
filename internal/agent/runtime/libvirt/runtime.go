@@ -81,7 +81,9 @@ func New(opts ...runtime.RuntimeOption) (*Runtime, error) {
 	}
 
 	if !r.capabilities.KVMAvailable {
-		fmt.Fprintf(os.Stderr, "Warning: KVM not available, VM performance will be degraded\n")
+		fmt.Fprintf(os.Stderr, "Warning: KVM not available, using QEMU TCG (software emulation)\n")
+		fmt.Fprintf(os.Stderr, "  CPU mode: host-model (host-passthrough requires KVM)\n")
+		fmt.Fprintf(os.Stderr, "  Performance will be significantly degraded\n")
 		config.EnableKVM = false
 	}
 
@@ -188,16 +190,21 @@ func (r *Runtime) CreateInstance(ctx context.Context, project *entities.Project)
 	}
 
 	// Wait for VM to boot and become ready.
+	// Unlock while waiting so other goroutines can proceed, then re-lock
+	// before returning so the deferred Unlock is balanced.
 	r.mu.Unlock()
-	if err := r.waitReady(ctx, instanceID); err != nil {
+	waitErr := r.waitReady(ctx, instanceID)
+	r.mu.Lock()
+
+	if waitErr != nil {
 		// Cleanup on failure.
-		r.mu.Lock()
 		delete(r.instances, instanceID)
+		// Unlock before potentially slow Destroy, then re-lock for the defer.
 		r.mu.Unlock()
 		_, _ = mgr.Destroy(project.Name, false)
-		return nil, fmt.Errorf("VM failed to become ready: %w", err)
+		r.mu.Lock()
+		return nil, fmt.Errorf("VM failed to become ready: %w", waitErr)
 	}
-	r.mu.Lock()
 
 	return instance, nil
 }
