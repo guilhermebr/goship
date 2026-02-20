@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -82,5 +83,37 @@ func TestGenerateUUID(t *testing.T) {
 	// Verify uniqueness
 	if uuid1 == uuid2 {
 		t.Errorf("two generated UUIDs should be different, got %s both times", uuid1)
+	}
+}
+
+func TestEnsurePathTraversable(t *testing.T) {
+	// Create a temp dir hierarchy with a restricted parent.
+	root := t.TempDir()
+	restricted := filepath.Join(root, "restricted")
+	inner := filepath.Join(restricted, "inner", "deep")
+
+	if err := os.MkdirAll(inner, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Remove o+x from the restricted dir.
+	if err := os.Chmod(restricted, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify it's not traversable.
+	info, _ := os.Stat(restricted)
+	if info.Mode().Perm()&0o001 != 0 {
+		t.Fatal("expected restricted dir to not have o+x")
+	}
+
+	// Fix it.
+	if err := ensurePathTraversable(inner); err != nil {
+		t.Fatalf("ensurePathTraversable failed: %v", err)
+	}
+
+	// Verify o+x was added.
+	info, _ = os.Stat(restricted)
+	if info.Mode().Perm()&0o001 == 0 {
+		t.Error("expected restricted dir to have o+x after ensurePathTraversable")
 	}
 }

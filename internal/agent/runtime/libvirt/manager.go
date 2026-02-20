@@ -130,6 +130,9 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 	if err := sanitizeVMDirACL(dir); err != nil {
 		return nil, fmt.Errorf("failed to sanitize VM directory ACLs: %w", err)
 	}
+	if err := ensurePathTraversable(dir); err != nil {
+		return nil, fmt.Errorf("failed to make VM path traversable for QEMU: %w", err)
+	}
 
 	success := false
 	defer func() {
@@ -224,6 +227,13 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 				PortName:   "goship.0",
 			},
 		},
+	}
+
+	// Ensure the libvirt network is active before creating the VM.
+	if opts.NetworkType == "network" && opts.NetworkSource != "" {
+		if err := EnsureNetwork(m.conn, opts.NetworkSource); err != nil {
+			return nil, fmt.Errorf("failed to ensure network: %w", err)
+		}
 	}
 
 	// Generate domain XML.
@@ -352,6 +362,41 @@ func sanitizeVMDirACL(dir string) error {
 
 	if err := os.Chmod(dir, 0o755); err != nil {
 		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+	return nil
+}
+
+// ensurePathTraversable ensures that every directory component from the
+// filesystem root down to dir has at least the execute (search) bit set for
+// others (o+x). This is required because the QEMU process typically runs as
+// the libvirt-qemu user (e.g. uid 64055) and needs to traverse the full path
+// to reach VM disk images. Without this, paths under restricted home
+// directories like /root/ (mode 700) cause "Permission denied" errors.
+func ensurePathTraversable(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+
+	// Collect all path components from root to dir.
+	var components []string
+	for p := abs; p != "/" && p != "."; p = filepath.Dir(p) {
+		components = append(components, p)
+	}
+
+	// Walk from shallowest to deepest.
+	for i := len(components) - 1; i >= 0; i-- {
+		info, err := os.Stat(components[i])
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm()
+		if mode&0o001 == 0 {
+			// Add o+x so the QEMU user can traverse this directory.
+			if err := os.Chmod(components[i], mode|0o001); err != nil {
+				return fmt.Errorf("chmod o+x %s: %w", components[i], err)
+			}
+		}
 	}
 	return nil
 }
