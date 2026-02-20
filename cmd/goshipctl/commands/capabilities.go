@@ -55,6 +55,12 @@ func formatCapabilities(caps *entities.HostCapabilities) string {
 	}
 	b.WriteString(fmt.Sprintf("KVM:           %s\n", kvmStatus))
 
+	cpuMode := "host-passthrough"
+	if !caps.KVMAvailable {
+		cpuMode = "host-model (KVM not available)"
+	}
+	b.WriteString(fmt.Sprintf("CPU Mode:      %s\n", cpuMode))
+
 	// CPU
 	b.WriteString(fmt.Sprintf("\nCPU Model:     %s\n", caps.CPUModel))
 	b.WriteString(fmt.Sprintf("CPU Vendor:    %s\n", caps.CPUVendor))

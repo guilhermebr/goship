@@ -91,6 +91,12 @@ func TestGenerateDomainXML_QEMUMode(t *testing.T) {
 	if strings.Contains(xml, "<domain type='kvm'>") {
 		t.Error("unexpected domain type 'kvm' when EnableKVM is false")
 	}
+	if !strings.Contains(xml, "<cpu mode='host-model'>") {
+		t.Error("expected cpu mode 'host-model' when EnableKVM is false")
+	}
+	if strings.Contains(xml, "host-passthrough") {
+		t.Error("unexpected host-passthrough when EnableKVM is false")
+	}
 }
 
 func TestGenerateDomainXML_MultipleDisks(t *testing.T) {
@@ -339,6 +345,59 @@ func TestGenerateDomainXML_DACSecLabel(t *testing.T) {
 		}
 		if strings.Contains(xml, "model='dac'") {
 			t.Error("DAC seclabel should not be emitted when SecurityNone is true")
+		}
+	})
+}
+
+func TestGenerateDomainXML_CPUModeSwitching(t *testing.T) {
+	baseConfig := func(enableKVM bool) *DomainConfig {
+		return &DomainConfig{
+			Name:      "cpu-test-vm",
+			UUID:      "77777777-7777-7777-7777-777777777777",
+			MemoryMB:  256,
+			EnableKVM: enableKVM,
+			CPU: entities.CPUTopology{
+				Sockets: 1,
+				Cores:   1,
+				Threads: 1,
+			},
+			Disks: []entities.DiskDevice{
+				{Path: "/disk.qcow2", Format: "qcow2", Bus: "virtio"},
+			},
+		}
+	}
+
+	t.Run("KVM enabled uses host-passthrough", func(t *testing.T) {
+		xml, err := GenerateDomainXML(baseConfig(true))
+		if err != nil {
+			t.Fatalf("GenerateDomainXML failed: %v", err)
+		}
+
+		if !strings.Contains(xml, "<domain type='kvm'>") {
+			t.Error("expected domain type 'kvm'")
+		}
+		if !strings.Contains(xml, "<cpu mode='host-passthrough'>") {
+			t.Error("expected cpu mode 'host-passthrough' with KVM")
+		}
+		if strings.Contains(xml, "host-model") {
+			t.Error("unexpected host-model with KVM enabled")
+		}
+	})
+
+	t.Run("QEMU TCG uses host-model", func(t *testing.T) {
+		xml, err := GenerateDomainXML(baseConfig(false))
+		if err != nil {
+			t.Fatalf("GenerateDomainXML failed: %v", err)
+		}
+
+		if !strings.Contains(xml, "<domain type='qemu'>") {
+			t.Error("expected domain type 'qemu'")
+		}
+		if !strings.Contains(xml, "<cpu mode='host-model'>") {
+			t.Error("expected cpu mode 'host-model' without KVM")
+		}
+		if strings.Contains(xml, "host-passthrough") {
+			t.Error("unexpected host-passthrough without KVM")
 		}
 	})
 }

@@ -38,6 +38,7 @@ func TestFormatCapabilities_Full(t *testing.T) {
 		"Hypervisor:    kvm",
 		"Architecture:  x86_64",
 		"KVM:           yes",
+		"CPU Mode:      host-passthrough",
 		"CPU Model:     Skylake-Server-IBRS",
 		"CPU Vendor:    Intel",
 		"1 socket(s), 8 core(s), 2 thread(s) [16 vCPUs]",
@@ -75,6 +76,7 @@ func TestFormatCapabilities_Minimal(t *testing.T) {
 
 	expected := []string{
 		"KVM:           no",
+		"CPU Mode:      host-model (KVM not available)",
 		"cortex-a72",
 		"1 socket(s), 4 core(s), 1 thread(s) [4 vCPUs]",
 		"Memory:        4096 MB (4.0 GB)",

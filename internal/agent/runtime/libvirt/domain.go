@@ -49,7 +49,7 @@ const domainXMLTemplate = `<domain type='{{if .EnableKVM}}kvm{{else}}qemu{{end}}
     <acpi/>
     <apic/>
   </features>
-  <cpu mode='host-passthrough'>
+  <cpu mode='{{if .EnableKVM}}host-passthrough{{else}}host-model{{end}}'>
     <topology sockets='{{.CPU.Sockets}}' cores='{{.CPU.Cores}}' threads='{{.CPU.Threads}}'/>
   </cpu>
 {{- if .MemoryBacking}}
