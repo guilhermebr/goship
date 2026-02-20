@@ -14,7 +14,7 @@ sudo apt install -y \
   genisoimage \
   libguestfs-tools
 
-# Verify KVM is available
+# Verify KVM is available (recommended but not required)
 ls /dev/kvm
 
 # Add your user to the libvirt group
@@ -24,6 +24,8 @@ sudo usermod -aG libvirt $USER
 # Start libvirtd
 sudo systemctl enable --now libvirtd
 ```
+
+**Note:** GoShip works without KVM using QEMU TCG (software emulation), but performance will be significantly degraded. See [Troubleshooting — QEMU TCG Fallback](troubleshooting.md#qemu-tcg-fallback) for details.
 
 You also need:
 - **Go 1.22+** — to build GoShip from source

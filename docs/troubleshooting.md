@@ -64,6 +64,63 @@ If `modprobe` fails, check your BIOS/UEFI settings — hardware virtualization (
 grep -E 'vmx|svm' /proc/cpuinfo
 ```
 
+### QEMU TCG Fallback
+
+When KVM is not available, GoShip automatically falls back to QEMU TCG (Tiny Code Generator) software emulation. Two things change:
+
+1. **Domain type** switches from `kvm` to `qemu`
+2. **CPU mode** switches from `host-passthrough` to `host-model`
+
+`host-passthrough` cannot work without KVM because it passes the host's physical CPU directly to the guest, which requires hardware virtualization extensions. `host-model` approximates the host CPU using only features that TCG can emulate in software.
+
+**Performance impact:** QEMU TCG is significantly slower than KVM — expect 10-100x slower CPU performance. I/O performance (disk, network) is less affected since virtio devices work the same way.
+
+Verify the current mode with:
+
+```bash
+goshipctl capabilities
+# Look for the "CPU Mode" and "KVM" lines
+```
+
+---
+
+## Libvirt Default Network Issues
+
+**Symptom:**
+
+```
+virError(Code=55, Domain=19, Message='network 'default' is not active')
+```
+
+Or VM creation fails with a network-related error.
+
+**What GoShip does automatically:** When creating a VM with `NetworkType: "network"`, GoShip checks whether the libvirt network is active before starting the VM. If the `default` network exists but is inactive (common after a reboot), GoShip starts it automatically and enables autostart. If the `default` network doesn't exist at all (fresh libvirt install), GoShip creates the standard NAT network (192.168.122.0/24) automatically.
+
+**If auto-start fails** (e.g., permission issues):
+
+```bash
+# Check network status
+virsh -c qemu:///system net-list --all
+
+# Start it manually
+sudo virsh net-start default
+sudo virsh net-autostart default
+
+# If the default network doesn't exist at all
+sudo virsh net-define /usr/share/libvirt/networks/default.xml
+sudo virsh net-start default
+sudo virsh net-autostart default
+```
+
+**Custom networks:** GoShip only auto-creates the `default` network. If you use a custom network name (e.g., `--network-source mynet`), you must create and start it yourself:
+
+```bash
+virsh -c qemu:///system net-define mynet.xml
+virsh -c qemu:///system net-start mynet
+```
+
+**Bridge networking:** If using `NetworkType: "bridge"` instead of `"network"`, libvirt network management doesn't apply — the bridge must be configured at the OS level.
+
 ---
 
 ## VM Fails to Boot
