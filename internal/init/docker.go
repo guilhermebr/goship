@@ -35,6 +35,17 @@ func NewDockerManager() (*DockerManager, error) {
 	return &DockerManager{client: cli}, nil
 }
 
+// LoadImage loads a Docker image from a tar archive reader (e.g. from docker save).
+func (m *DockerManager) LoadImage(ctx context.Context, reader io.Reader) error {
+	resp, err := m.client.ImageLoad(ctx, reader)
+	if err != nil {
+		return fmt.Errorf("failed to load image: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
 // Deploy deploys a container for the given app spec.
 func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error {
 	// Build full image reference.
@@ -45,13 +56,17 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 		imageRef = fmt.Sprintf("%s:latest", app.Image)
 	}
 
-	// Pull image.
-	reader, err := m.client.ImagePull(ctx, imageRef, image.PullOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to pull image %s: %w", imageRef, err)
+	// Check if image exists locally first (e.g. pushed via upload-image).
+	_, _, inspectErr := m.client.ImageInspectWithRaw(ctx, imageRef)
+	if inspectErr != nil {
+		// Image not found locally, pull from registry.
+		reader, err := m.client.ImagePull(ctx, imageRef, image.PullOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to pull image %s: %w", imageRef, err)
+		}
+		defer reader.Close()
+		_, _ = io.Copy(io.Discard, reader) // Wait for pull to complete.
 	}
-	defer reader.Close()
-	_, _ = io.Copy(io.Discard, reader) // Wait for pull to complete.
 
 	// Build container config.
 	containerConfig := &container.Config{

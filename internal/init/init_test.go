@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
@@ -261,6 +262,157 @@ func TestHandleUpdateInit_DataWithoutBegin(t *testing.T) {
 	// Send finish without begin.
 	resp = agent.handleUpdateInit(&v1.InitCommand{
 		Action: v1.ActionUpdateInit,
+		Phase:  "finish",
+	})
+	if resp.Status != v1.StatusError {
+		t.Fatalf("expected error, got %q", resp.Status)
+	}
+}
+
+func TestHandleUploadImage_FullCycle(t *testing.T) {
+	dir := t.TempDir()
+	agent, _, _ := newTestInitWithDir(t, dir)
+
+	// Create a small fake gzipped tar payload (simulates docker save | gzip output).
+	payload := []byte("fake-docker-image-tar-gz-data-for-testing")
+	checksum := fmt.Sprintf("%x", sha256.Sum256(payload))
+
+	// Phase: begin
+	resp := agent.handleUploadImage(&v1.InitCommand{
+		Action:   v1.ActionUploadImage,
+		Phase:    "begin",
+		ImageRef: "myapp:test",
+		Size:     int64(len(payload)),
+		Checksum: checksum,
+	})
+	if resp.Status != v1.StatusOK {
+		t.Fatalf("begin: expected OK, got %q: %s", resp.Status, resp.Error)
+	}
+
+	// Phase: data (send in two chunks)
+	mid := len(payload) / 2
+	chunk1 := base64.StdEncoding.EncodeToString(payload[:mid])
+	chunk2 := base64.StdEncoding.EncodeToString(payload[mid:])
+
+	resp = agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
+		Phase:  "data",
+		Data:   chunk1,
+	})
+	if resp.Status != v1.StatusOK {
+		t.Fatalf("data chunk1: expected OK, got %q: %s", resp.Status, resp.Error)
+	}
+	if resp.BytesReceived != int64(mid) {
+		t.Fatalf("data chunk1: expected %d bytes received, got %d", mid, resp.BytesReceived)
+	}
+
+	resp = agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
+		Phase:  "data",
+		Data:   chunk2,
+	})
+	if resp.Status != v1.StatusOK {
+		t.Fatalf("data chunk2: expected OK, got %q: %s", resp.Status, resp.Error)
+	}
+	if resp.BytesReceived != int64(len(payload)) {
+		t.Fatalf("data chunk2: expected %d bytes received, got %d", len(payload), resp.BytesReceived)
+	}
+
+	// Phase: finish — Docker may not be available in test environment.
+	// The handler will verify checksum first, then try docker load.
+	resp = agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
+		Phase:  "finish",
+	})
+
+	if agent.docker == nil {
+		// Without Docker, finish should fail at the docker load step (after checksum passes).
+		if resp.Status != v1.StatusError {
+			t.Fatalf("finish without docker: expected error, got %q", resp.Status)
+		}
+		if resp.Error != "Docker is not available to load image" {
+			t.Fatalf("finish without docker: unexpected error: %s", resp.Error)
+		}
+	} else {
+		// With Docker, it would try to load (and likely fail with invalid tar).
+		// Either way, checksum verification passed.
+		t.Logf("finish: status=%s error=%s", resp.Status, resp.Error)
+	}
+
+	// Verify state is cleared.
+	if agent.imageUpload != nil {
+		t.Fatal("expected imageUpload state to be nil after finish")
+	}
+
+	// Verify temp file is cleaned up.
+	if _, err := os.Stat("/tmp/goship-image-upload.tar.gz"); !os.IsNotExist(err) {
+		t.Fatalf("expected temp file to be removed, got err=%v", err)
+	}
+}
+
+func TestHandleUploadImage_ChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	agent, _, _ := newTestInitWithDir(t, dir)
+
+	payload := []byte("image data for checksum test")
+
+	// Begin with wrong checksum.
+	resp := agent.handleUploadImage(&v1.InitCommand{
+		Action:   v1.ActionUploadImage,
+		Phase:    "begin",
+		ImageRef: "badimage:v1",
+		Size:     int64(len(payload)),
+		Checksum: "0000000000000000000000000000000000000000000000000000000000000000",
+	})
+	if resp.Status != v1.StatusOK {
+		t.Fatalf("begin: expected OK, got %q: %s", resp.Status, resp.Error)
+	}
+
+	// Send all data.
+	resp = agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
+		Phase:  "data",
+		Data:   base64.StdEncoding.EncodeToString(payload),
+	})
+	if resp.Status != v1.StatusOK {
+		t.Fatalf("data: expected OK, got %q: %s", resp.Status, resp.Error)
+	}
+
+	// Finish should fail with checksum mismatch.
+	resp = agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
+		Phase:  "finish",
+	})
+	if resp.Status != v1.StatusError {
+		t.Fatalf("finish: expected error, got %q", resp.Status)
+	}
+	if !strings.Contains(resp.Error, "checksum mismatch") {
+		t.Fatalf("finish: expected checksum mismatch error, got: %s", resp.Error)
+	}
+
+	// State should be cleared.
+	if agent.imageUpload != nil {
+		t.Fatal("expected imageUpload state to be nil after checksum mismatch")
+	}
+}
+
+func TestHandleUploadImage_DataWithoutBegin(t *testing.T) {
+	dir := t.TempDir()
+	agent, _, _ := newTestInitWithDir(t, dir)
+
+	// Send data without begin.
+	resp := agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
+		Phase:  "data",
+		Data:   base64.StdEncoding.EncodeToString([]byte("some data")),
+	})
+	if resp.Status != v1.StatusError {
+		t.Fatalf("expected error, got %q", resp.Status)
+	}
+
+	// Send finish without begin.
+	resp = agent.handleUploadImage(&v1.InitCommand{
+		Action: v1.ActionUploadImage,
 		Phase:  "finish",
 	})
 	if resp.Status != v1.StatusError {

@@ -16,6 +16,7 @@ const (
 	ActionLogs       = "logs"
 	ActionUpdateInit    = "update-init"
 	ActionUploadBinary = "upload-binary"
+	ActionUploadImage  = "upload-image"
 )
 
 // Response status constants.
@@ -32,12 +33,13 @@ type InitCommand struct {
 	Lines   int                `json:"lines,omitempty"`
 	LogFile string             `json:"log_file,omitempty"` // Path to log file (default: goship-init.log)
 
-	// Fields for chunked transfer protocol (update-init, upload-binary).
+	// Fields for chunked transfer protocol (update-init, upload-binary, upload-image).
 	Phase    string `json:"phase,omitempty"`     // "begin", "data", "finish"
 	Data     string `json:"data,omitempty"`      // base64-encoded chunk (data phase)
 	Size     int64  `json:"size,omitempty"`      // total binary size in bytes (begin phase)
 	Checksum string `json:"checksum,omitempty"`  // sha256 hex digest (begin phase)
 	FileName string `json:"file_name,omitempty"` // original filename for upload-binary
+	ImageRef string `json:"image_ref,omitempty"` // Docker image reference for upload-image
 }
 
 // InitResponse is the reply from the GoShip Init agent back to the host.

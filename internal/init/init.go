@@ -49,6 +49,15 @@ type uploadState struct {
 	received int64
 }
 
+// imageUploadState tracks an in-progress Docker image upload transfer.
+type imageUploadState struct {
+	tmpFile  *os.File
+	imageRef string // Docker image reference (e.g. myapp:v1)
+	size     int64
+	checksum string // expected sha256 hex
+	received int64
+}
+
 // Init is the GoShip Init agent orchestrator.
 // It manages the communicator lifecycle, Docker/Process executors, and command handlers.
 type Init struct {
@@ -58,9 +67,10 @@ type Init struct {
 	executor *ExecutorManager
 	ctx      context.Context
 	cancel   context.CancelFunc
-	initDir  string       // directory where goship-init binary lives
-	update   *updateState // in-progress update transfer (nil when idle)
-	upload   *uploadState // in-progress binary upload transfer (nil when idle)
+	initDir     string            // directory where goship-init binary lives
+	update      *updateState      // in-progress update transfer (nil when idle)
+	upload      *uploadState      // in-progress binary upload transfer (nil when idle)
+	imageUpload *imageUploadState // in-progress image upload transfer (nil when idle)
 }
 
 // New creates a new Init agent with the given serial device path.
@@ -115,6 +125,7 @@ func newFromCommunicatorWithDir(comm *Communicator, initDir string) *Init {
 	comm.RegisterHandler(v1.ActionLogs, i.handleLogs)
 	comm.RegisterHandler(v1.ActionUpdateInit, i.handleUpdateInit)
 	comm.RegisterHandler(v1.ActionUploadBinary, i.handleUploadBinary)
+	comm.RegisterHandler(v1.ActionUploadImage, i.handleUploadImage)
 
 	return i
 }
@@ -715,6 +726,172 @@ func (i *Init) cleanupUpload() {
 	i.upload.tmpFile.Close()
 	os.Remove(tmpPath)
 	i.upload = nil
+}
+
+func (i *Init) handleUploadImage(cmd *v1.InitCommand) *v1.InitResponse {
+	switch cmd.Phase {
+	case "begin":
+		return i.handleImageUploadBegin(cmd)
+	case "data":
+		return i.handleImageUploadData(cmd)
+	case "finish":
+		return i.handleImageUploadFinish(cmd)
+	default:
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("unknown upload-image phase: %s", cmd.Phase),
+		}
+	}
+}
+
+func (i *Init) handleImageUploadBegin(cmd *v1.InitCommand) *v1.InitResponse {
+	if cmd.ImageRef == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "image_ref is required"}
+	}
+	if cmd.Size <= 0 {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "size must be positive"}
+	}
+	if cmd.Checksum == "" {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "checksum is required"}
+	}
+
+	// Cancel any previous in-progress image upload.
+	i.cleanupImageUpload()
+
+	tmpPath := "/tmp/goship-image-upload.tar.gz"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to create temp file: %v", err),
+		}
+	}
+
+	i.imageUpload = &imageUploadState{
+		tmpFile:  f,
+		imageRef: cmd.ImageRef,
+		size:     cmd.Size,
+		checksum: cmd.Checksum,
+	}
+
+	log.Printf("goship-init: upload-image begin, image=%s size=%d", cmd.ImageRef, cmd.Size)
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+func (i *Init) handleImageUploadData(cmd *v1.InitCommand) *v1.InitResponse {
+	if i.imageUpload == nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "no image upload in progress (send begin first)"}
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(cmd.Data)
+	if err != nil {
+		i.cleanupImageUpload()
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to decode data: %v", err),
+		}
+	}
+
+	n, err := i.imageUpload.tmpFile.Write(decoded)
+	if err != nil {
+		i.cleanupImageUpload()
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to write data: %v", err),
+		}
+	}
+
+	i.imageUpload.received += int64(n)
+
+	return &v1.InitResponse{
+		Status:        v1.StatusOK,
+		BytesReceived: i.imageUpload.received,
+	}
+}
+
+func (i *Init) handleImageUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
+	if i.imageUpload == nil {
+		return &v1.InitResponse{Status: v1.StatusError, Error: "no image upload in progress (send begin first)"}
+	}
+
+	tmpPath := i.imageUpload.tmpFile.Name()
+	expectedChecksum := i.imageUpload.checksum
+
+	if err := i.imageUpload.tmpFile.Close(); err != nil {
+		i.imageUpload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to close temp file: %v", err),
+		}
+	}
+
+	// Compute SHA256.
+	actualChecksum, err := fileSHA256(tmpPath)
+	if err != nil {
+		i.imageUpload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to compute checksum: %v", err),
+		}
+	}
+
+	if actualChecksum != expectedChecksum {
+		i.imageUpload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum),
+		}
+	}
+
+	// Load image into Docker.
+	if i.docker == nil {
+		i.imageUpload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  "Docker is not available to load image",
+		}
+	}
+
+	imgFile, err := os.Open(tmpPath)
+	if err != nil {
+		i.imageUpload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to open image file: %v", err),
+		}
+	}
+	defer imgFile.Close()
+
+	if err := i.docker.LoadImage(i.ctx, imgFile); err != nil {
+		i.imageUpload = nil
+		os.Remove(tmpPath)
+		return &v1.InitResponse{
+			Status: v1.StatusError,
+			Error:  fmt.Sprintf("failed to load image: %v", err),
+		}
+	}
+
+	os.Remove(tmpPath)
+	imageRef := i.imageUpload.imageRef
+	i.imageUpload = nil
+	log.Printf("goship-init: upload-image complete, image %s loaded", imageRef)
+	return &v1.InitResponse{Status: v1.StatusOK}
+}
+
+// cleanupImageUpload cancels any in-progress image upload transfer.
+func (i *Init) cleanupImageUpload() {
+	if i.imageUpload == nil {
+		return
+	}
+	tmpPath := i.imageUpload.tmpFile.Name()
+	i.imageUpload.tmpFile.Close()
+	os.Remove(tmpPath)
+	i.imageUpload = nil
 }
 
 // fileSHA256 computes the SHA256 hex digest of a file.

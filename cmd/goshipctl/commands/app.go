@@ -1,11 +1,13 @@
 package commands
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,6 +41,22 @@ var (
 	appTags          []string
 	appRestartPolicy string
 )
+
+// Flags for app edit.
+var (
+	appEditImage         string
+	appEditBinary        string
+	appEditPorts         []string
+	appEditEnv           []string
+	appEditDescription   string
+	appEditTags          []string
+	appEditRestartPolicy string
+	appEditCPU           float64
+	appEditMemory        int64
+)
+
+// Flags for app deploy.
+var appLocalImage bool
 
 // Flags for app logs.
 var (
@@ -98,6 +116,22 @@ var appLogsCmd = &cobra.Command{
 	RunE:  runAppLogs,
 }
 
+var appEditCmd = &cobra.Command{
+	Use:   "edit <project> <appname>",
+	Short: "Edit an application definition",
+	Long:  `Modify an application's configuration without deploying. Changes take effect on next deploy.`,
+	Args:  cobra.ExactArgs(2),
+	RunE:  runAppEdit,
+}
+
+var appPushImageCmd = &cobra.Command{
+	Use:   "push-image <project> <image>",
+	Short: "Push a local Docker image to the project VM",
+	Long:  `Export a local Docker image and transfer it to the project VM via virtio-serial. No registry needed.`,
+	Args:  cobra.ExactArgs(2),
+	RunE:  runAppPushImage,
+}
+
 func init() {
 	appCreateCmd.Flags().StringVarP(&appMode, "mode", "m", "container", "Execution mode: container or process")
 	appCreateCmd.Flags().StringVarP(&appImage, "image", "i", "", "Container image (required for container mode)")
@@ -111,16 +145,31 @@ func init() {
 	appCreateCmd.Flags().StringArrayVarP(&appTags, "tag", "g", nil, "Tags (repeatable)")
 	appCreateCmd.Flags().StringVar(&appRestartPolicy, "restart-policy", "never", "Restart policy: never, always, or on-failure")
 
+	appDeployCmd.Flags().StringVarP(&appImage, "image", "i", "", "Container image (overrides app spec)")
+	appDeployCmd.Flags().BoolVar(&appLocalImage, "local-image", false, "Push local Docker image to VM before deploying")
+
+	appEditCmd.Flags().StringVarP(&appEditImage, "image", "i", "", "Container image")
+	appEditCmd.Flags().StringVarP(&appEditBinary, "binary", "b", "", "Binary path (process mode)")
+	appEditCmd.Flags().StringArrayVarP(&appEditPorts, "port", "p", nil, "Port mapping host:container (repeatable, replaces all)")
+	appEditCmd.Flags().StringArrayVarP(&appEditEnv, "env", "e", nil, "Set env var KEY=VALUE (repeatable)")
+	appEditCmd.Flags().StringVarP(&appEditDescription, "description", "d", "", "App description")
+	appEditCmd.Flags().StringArrayVarP(&appEditTags, "tag", "g", nil, "Tags (repeatable, replaces all)")
+	appEditCmd.Flags().StringVar(&appEditRestartPolicy, "restart-policy", "", "Restart policy: never, always, on-failure")
+	appEditCmd.Flags().Float64Var(&appEditCPU, "cpu", 0, "CPU limit (cores)")
+	appEditCmd.Flags().Int64Var(&appEditMemory, "memory", 0, "Memory limit in MB")
+
 	appLogsCmd.Flags().IntVarP(&appLogLines, "lines", "n", 100, "Number of log lines to show")
 	appLogsCmd.Flags().BoolVarP(&appLogFollow, "follow", "f", false, "Follow log output (poll every 2s)")
 
 	appCmd.AddCommand(appCreateCmd)
+	appCmd.AddCommand(appEditCmd)
 	appCmd.AddCommand(appDeployCmd)
 	appCmd.AddCommand(appListCmd)
 	appCmd.AddCommand(appInfoCmd)
 	appCmd.AddCommand(appStopCmd)
 	appCmd.AddCommand(appDeleteCmd)
 	appCmd.AddCommand(appLogsCmd)
+	appCmd.AddCommand(appPushImageCmd)
 }
 
 func runAppCreate(cmd *cobra.Command, args []string) error {
@@ -137,11 +186,12 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid mode: %s (must be 'container' or 'process')", appMode)
 	}
 
-	if mode == entities.ExecutionModeContainer && appImage == "" {
-		return fmt.Errorf("--image is required for container mode")
-	}
 	if mode == entities.ExecutionModeProcess && appBinary == "" {
 		return fmt.Errorf("--binary is required for process mode")
+	}
+
+	if mode == entities.ExecutionModeContainer && len(appPorts) == 0 {
+		return fmt.Errorf("--port is required for container mode (e.g., -p 8080:80)")
 	}
 
 	// Check if app already exists.
@@ -192,9 +242,9 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "App '%s' created in project '%s'\n", appName, projectName)
 	fmt.Fprintf(out, "  Mode:  %s\n", mode)
-	if mode == entities.ExecutionModeContainer {
+	if mode == entities.ExecutionModeContainer && appImage != "" {
 		fmt.Fprintf(out, "  Image: %s\n", appImage)
-	} else {
+	} else if mode == entities.ExecutionModeProcess {
 		fmt.Fprintf(out, "  Binary: %s\n", appBinary)
 	}
 	if len(ports) > 0 {
@@ -205,9 +255,111 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runAppEdit(cmd *cobra.Command, args []string) error {
+	projectName, appName := args[0], args[1]
+
+	project, err := store.GetProject(projectName)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", projectName)
+	}
+
+	app := store.GetApp(project.ID, appName)
+	if app == nil {
+		return fmt.Errorf("app '%s' not found in project '%s'", appName, projectName)
+	}
+
+	var changes []string
+
+	if cmd.Flags().Changed("image") {
+		if app.IsProcessMode() {
+			return fmt.Errorf("--image is not valid for process mode apps")
+		}
+		app.Image = appEditImage
+		changes = append(changes, fmt.Sprintf("  Image: %s", appEditImage))
+	}
+
+	if cmd.Flags().Changed("binary") {
+		if app.IsContainerMode() {
+			return fmt.Errorf("--binary is not valid for container mode apps")
+		}
+		app.Binary = appEditBinary
+		changes = append(changes, fmt.Sprintf("  Binary: %s", appEditBinary))
+	}
+
+	if cmd.Flags().Changed("port") {
+		ports, err := parsePorts(appEditPorts)
+		if err != nil {
+			return err
+		}
+		app.Ports = ports
+		changes = append(changes, fmt.Sprintf("  Ports: %s", formatPorts(ports)))
+	}
+
+	if cmd.Flags().Changed("env") {
+		env := parseEnv(appEditEnv)
+		// Merge new env vars into existing.
+		if app.Env == nil {
+			app.Env = make(map[string]string)
+		}
+		for k, v := range env {
+			app.Env[k] = v
+		}
+		changes = append(changes, fmt.Sprintf("  Env: %d var(s) updated", len(env)))
+	}
+
+	if cmd.Flags().Changed("description") {
+		app.Description = appEditDescription
+		changes = append(changes, fmt.Sprintf("  Description: %s", appEditDescription))
+	}
+
+	if cmd.Flags().Changed("tag") {
+		app.Tags = appEditTags
+		changes = append(changes, fmt.Sprintf("  Tags: %s", strings.Join(appEditTags, ", ")))
+	}
+
+	if cmd.Flags().Changed("restart-policy") {
+		rp := entities.RestartPolicy(appEditRestartPolicy)
+		switch rp {
+		case entities.RestartPolicyNever, entities.RestartPolicyAlways, entities.RestartPolicyOnFailure:
+			// valid
+		default:
+			return fmt.Errorf("invalid restart policy: %s (must be 'never', 'always', or 'on-failure')", appEditRestartPolicy)
+		}
+		app.RestartPolicy = rp
+		changes = append(changes, fmt.Sprintf("  Restart policy: %s", rp))
+	}
+
+	if cmd.Flags().Changed("cpu") {
+		app.Resources.CPU = appEditCPU
+		changes = append(changes, fmt.Sprintf("  CPU: %.1f cores", appEditCPU))
+	}
+
+	if cmd.Flags().Changed("memory") {
+		app.Resources.MemoryMB = appEditMemory
+		changes = append(changes, fmt.Sprintf("  Memory: %d MB", appEditMemory))
+	}
+
+	if len(changes) == 0 {
+		return fmt.Errorf("no changes specified; use flags to modify app fields (see --help)")
+	}
+
+	if err := store.SetApp(project.ID, app); err != nil {
+		return fmt.Errorf("failed to save app: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "App '%s' updated in project '%s':\n", appName, projectName)
+	for _, c := range changes {
+		fmt.Fprintln(out, c)
+	}
+	fmt.Fprintf(out, "\nNote: changes take effect on next deploy.\n")
+
+	return nil
+}
+
 func runAppDeploy(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	project, err := store.GetProject(projectName)
@@ -220,6 +372,19 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("app '%s' not found in project '%s'", appName, projectName)
 	}
 
+	// If --image flag is provided, update the app's image.
+	if appImage != "" {
+		app.Image = appImage
+		if err := store.SetApp(project.ID, app); err != nil {
+			return fmt.Errorf("failed to update app image: %w", err)
+		}
+	}
+
+	// Validate: container mode must have an image by deploy time.
+	if app.IsContainerMode() && app.Image == "" {
+		return fmt.Errorf("--image is required: app '%s' has no image set", appName)
+	}
+
 	instance := store.GetInstance(project.ID)
 	if instance == nil {
 		return fmt.Errorf("no VM instance found for project '%s'", projectName)
@@ -228,6 +393,19 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 	rt.LoadInstance(instance)
 
 	out := cmd.OutOrStdout()
+
+	// If --local-image is set, push the local Docker image to the VM first.
+	if appLocalImage && app.IsContainerMode() {
+		imageRef := app.Image
+		if app.Tag != "" {
+			imageRef = fmt.Sprintf("%s:%s", app.Image, app.Tag)
+		} else if !strings.Contains(app.Image, ":") {
+			imageRef = fmt.Sprintf("%s:latest", app.Image)
+		}
+		if err := pushLocalImage(ctx, out, instance.ID, imageRef); err != nil {
+			return fmt.Errorf("failed to push local image: %w", err)
+		}
+	}
 
 	// For process mode, auto-upload local binary if it exists on the host.
 	if app.IsProcessMode() && app.Binary != "" {
@@ -611,6 +789,103 @@ func runAppLogs(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+}
+
+func runAppPushImage(cmd *cobra.Command, args []string) error {
+	projectName, imageRef := args[0], args[1]
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(projectName)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", projectName)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project '%s'", projectName)
+	}
+
+	rt.LoadInstance(instance)
+
+	out := cmd.OutOrStdout()
+	if err := pushLocalImage(ctx, out, instance.ID, imageRef); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "Image '%s' pushed to project '%s'\n", imageRef, projectName)
+	return nil
+}
+
+// pushLocalImage exports a local Docker image, compresses it, and transfers it to the VM.
+func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, imageRef string) error {
+	fmt.Fprintf(out, "Exporting image '%s'...\n", imageRef)
+
+	// Create temp file for the compressed image.
+	tmpFile, err := os.CreateTemp("", "goship-image-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Run docker save and pipe through gzip to temp file.
+	dockerSave := exec.CommandContext(ctx, "docker", "save", imageRef)
+	saveOut, err := dockerSave.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create pipe: %w", err)
+	}
+
+	if err := dockerSave.Start(); err != nil {
+		return fmt.Errorf("failed to run 'docker save %s': %w", imageRef, err)
+	}
+
+	gzWriter := gzip.NewWriter(tmpFile)
+	if _, err := io.Copy(gzWriter, saveOut); err != nil {
+		dockerSave.Wait()
+		return fmt.Errorf("failed to compress image: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		dockerSave.Wait()
+		return fmt.Errorf("failed to finalize compression: %w", err)
+	}
+
+	if err := dockerSave.Wait(); err != nil {
+		return fmt.Errorf("docker save failed: %w", err)
+	}
+
+	// Get compressed file size.
+	stat, err := tmpFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat compressed image: %w", err)
+	}
+	compressedSize := stat.Size()
+
+	// Compute SHA256 of compressed file.
+	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek: %w", err)
+	}
+
+	h := sha256.New()
+	if _, err := io.Copy(h, tmpFile); err != nil {
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+	checksum := fmt.Sprintf("%x", h.Sum(nil))
+
+	// Seek back to beginning for transfer.
+	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek: %w", err)
+	}
+
+	fmt.Fprintf(out, "  Compressed size: %.1f MB\n", float64(compressedSize)/(1024*1024))
+	fmt.Fprintf(out, "Pushing image to VM...\n")
+
+	if err := rt.UploadImage(ctx, instanceID, imageRef, tmpFile, compressedSize, checksum); err != nil {
+		return fmt.Errorf("failed to upload image: %w", err)
+	}
+
+	fmt.Fprintf(out, "  Image loaded successfully\n")
+	return nil
 }
 
 // formatPorts formats port mappings for display.

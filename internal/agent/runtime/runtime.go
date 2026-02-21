@@ -45,6 +45,9 @@ type ProjectRuntime interface {
 	// UploadBinary uploads a binary file into the VM for a specific app.
 	UploadBinary(ctx context.Context, instanceID string, appName string, fileName string, reader io.Reader, size int64, checksum string) error
 
+	// UploadImage uploads a Docker image tarball into the VM and loads it into Docker.
+	UploadImage(ctx context.Context, instanceID string, imageRef string, reader io.Reader, size int64, checksum string) error
+
 	// GetAppLogs retrieves log output from an application inside a VM instance.
 	GetAppLogs(ctx context.Context, instanceID string, appName string, lines int) (string, error)
 
