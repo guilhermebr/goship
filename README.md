@@ -65,6 +65,23 @@ GoShip is built around a simple model:
 
 ---
 
+## Current Features
+
+- **Project lifecycle** — Create, start, stop, restart, delete project VMs
+- **Container apps** — Deploy Docker containers inside VMs with port mapping, env vars, and resource limits
+- **Process apps** — Deploy binaries directly with auto-restart, exponential backoff, and per-process log files
+- **Binary upload** — Transparent chunked transfer of local binaries into VMs over virtio-serial
+- **Local image deploy** — `--local-image` flag exports a host Docker image, compresses it, and pushes it into the VM before deploying
+- **Image management** — Pull base Alpine cloud images, build local images, push images into VMs (`app push-image`)
+- **App editing** — Modify app specs (ports, env, image, resources) without redeploying
+- **Boot progress streaming** — Real-time cloud-init log output during project creation
+- **Portable builds** — `libvirt_dlopen` build tag removes compile-time libvirt version dependency
+- **KVM/TCG fallback** — Automatic detection of KVM; graceful fallback to QEMU software emulation
+- **Auto network setup** — Ensures the libvirt `default` network is active before VM creation
+- **DAC security labels** — Numeric UID/GID labels for precise QEMU file access control
+
+---
+
 ## Install
 
 ```bash
@@ -100,12 +117,26 @@ goshipctl project create myapp --cpu 1 --memory 512
 goshipctl app create myapp web --image nginx:alpine --port 8080:80
 goshipctl app deploy myapp web
 
+# Deploy using a locally built Docker image (pushed into VM automatically)
+goshipctl app create myapp api --image myapi:latest --port 3000:3000
+goshipctl app deploy myapp api --local-image
+
+# Deploy a process-mode app (binary uploaded into VM automatically)
+goshipctl app create myapp worker --mode process --binary ./bin/myworker --restart-policy on-failure
+goshipctl app deploy myapp worker
+
 # Check status and logs
 goshipctl app list myapp
 goshipctl app logs myapp web
+goshipctl app logs myapp worker --follow
+
+# Edit an app and redeploy
+goshipctl app edit myapp web --port 9090:80
+goshipctl app deploy myapp web
 
 # Clean up
 goshipctl app delete myapp web
+goshipctl app delete myapp worker
 goshipctl project delete myapp
 ```
 
@@ -122,12 +153,13 @@ See the [Getting Started guide](docs/getting-started.md) for the full walkthroug
 | [CLI Reference](docs/cli-reference.md) | Every command, flag, and example |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
 | [Design Document](docs/DESIGN.md) | Full architecture RFC |
+| [Decision Log](DECISION-LOG.md) | Architectural decisions and their rationale (ADR-001 through ADR-034) |
 
 ---
 
 ## Prerequisites
 
-- Linux with KVM support (`/dev/kvm`)
+- Linux (KVM recommended; QEMU TCG software emulation used as fallback when `/dev/kvm` is unavailable)
 - Go 1.22+
 - System packages: `libvirt-dev`, `qemu-system-x86`, `qemu-utils`, `genisoimage`, `libguestfs-tools`
 - User in the `libvirt` group
