@@ -842,11 +842,11 @@ func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, image
 
 	gzWriter := gzip.NewWriter(tmpFile)
 	if _, err := io.Copy(gzWriter, saveOut); err != nil {
-		dockerSave.Wait()
+		_ = dockerSave.Wait()
 		return fmt.Errorf("failed to compress image: %w", err)
 	}
 	if err := gzWriter.Close(); err != nil {
-		dockerSave.Wait()
+		_ = dockerSave.Wait()
 		return fmt.Errorf("failed to finalize compression: %w", err)
 	}
 

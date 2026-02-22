@@ -57,7 +57,7 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 	}
 
 	// Check if image exists locally first (e.g. pushed via upload-image).
-	_, _, inspectErr := m.client.ImageInspectWithRaw(ctx, imageRef)
+	_, inspectErr := m.client.ImageInspect(ctx, imageRef)
 	if inspectErr != nil {
 		// Image not found locally, pull from registry.
 		reader, err := m.client.ImagePull(ctx, imageRef, image.PullOptions{})
