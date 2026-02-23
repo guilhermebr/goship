@@ -15,6 +15,7 @@ type ComposeService struct {
 	Image       string            `yaml:"image"`
 	Command     any               `yaml:"command"`
 	Ports       []string          `yaml:"ports"`
+	EnvFile     any               `yaml:"env_file"`
 	Environment any               `yaml:"environment"`
 	Volumes     []string          `yaml:"volumes"`
 	Restart     string            `yaml:"restart"`

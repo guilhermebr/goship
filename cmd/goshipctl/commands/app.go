@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	"github.com/guilhermebr/goship/internal/compose"
 	"github.com/guilhermebr/goship/internal/shared/size"
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
@@ -38,6 +39,7 @@ var (
 	appPorts         []string
 	appReplicas      int
 	appEnv           []string
+	appEnvFile       string
 	appCPU           float64
 	appMemory        string
 	appDescription   string
@@ -51,6 +53,7 @@ var (
 	appEditBinary        string
 	appEditPorts         []string
 	appEditEnv           []string
+	appEditEnvFile       string
 	appEditDescription   string
 	appEditTags          []string
 	appEditRestartPolicy string
@@ -142,6 +145,7 @@ func init() {
 	appCreateCmd.Flags().StringArrayVarP(&appPorts, "port", "p", nil, "Port mapping host:container (repeatable)")
 	appCreateCmd.Flags().IntVarP(&appReplicas, "replicas", "r", 1, "Number of replicas")
 	appCreateCmd.Flags().StringArrayVarP(&appEnv, "env", "e", nil, "Environment variable KEY=VALUE (repeatable)")
+	appCreateCmd.Flags().StringVar(&appEnvFile, "env-file", "", "Load environment variables from a file")
 	appCreateCmd.Flags().Float64Var(&appCPU, "cpu", 0, "CPU limit (cores)")
 	appCreateCmd.Flags().StringVar(&appMemory, "memory", "", "Memory limit (e.g., 512M, 2G)")
 	appCreateCmd.Flags().StringVarP(&appDescription, "description", "d", "", "App description")
@@ -157,6 +161,7 @@ func init() {
 	appEditCmd.Flags().
 		StringArrayVarP(&appEditPorts, "port", "p", nil, "Port mapping host:container (repeatable, replaces all)")
 	appEditCmd.Flags().StringArrayVarP(&appEditEnv, "env", "e", nil, "Set env var KEY=VALUE (repeatable)")
+	appEditCmd.Flags().StringVar(&appEditEnvFile, "env-file", "", "Load environment variables from a file")
 	appEditCmd.Flags().StringVarP(&appEditDescription, "description", "d", "", "App description")
 	appEditCmd.Flags().StringArrayVarP(&appEditTags, "tag", "g", nil, "Tags (repeatable, replaces all)")
 	appEditCmd.Flags().
@@ -220,8 +225,16 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Parse environment variables.
-	env := parseEnv(appEnv)
+	// Parse environment variables: --env-file is the base, --env overrides.
+	env := make(map[string]string)
+	if appEnvFile != "" {
+		fileEnv, err := compose.LoadEnvFile(appEnvFile)
+		if err != nil {
+			return fmt.Errorf("failed to load --env-file: %w", err)
+		}
+		maps.Copy(env, fileEnv)
+	}
+	maps.Copy(env, parseEnv(appEnv))
 
 	var memoryMB int64
 	if appMemory != "" {
@@ -310,14 +323,22 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 		changes = append(changes, fmt.Sprintf("  Ports: %s", formatPorts(ports)))
 	}
 
-	if cmd.Flags().Changed("env") {
-		env := parseEnv(appEditEnv)
-		// Merge new env vars into existing.
+	if cmd.Flags().Changed("env-file") || cmd.Flags().Changed("env") {
 		if app.Env == nil {
 			app.Env = make(map[string]string)
 		}
-		maps.Copy(app.Env, env)
-		changes = append(changes, fmt.Sprintf("  Env: %d var(s) updated", len(env)))
+		// Load env file first (base), then --env overrides.
+		if appEditEnvFile != "" {
+			fileEnv, loadErr := compose.LoadEnvFile(appEditEnvFile)
+			if loadErr != nil {
+				return fmt.Errorf("failed to load --env-file: %w", loadErr)
+			}
+			maps.Copy(app.Env, fileEnv)
+		}
+		if cmd.Flags().Changed("env") {
+			maps.Copy(app.Env, parseEnv(appEditEnv))
+		}
+		changes = append(changes, fmt.Sprintf("  Env: %d var(s) total", len(app.Env)))
 	}
 
 	if cmd.Flags().Changed("description") {

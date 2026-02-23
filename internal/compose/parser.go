@@ -3,7 +3,9 @@ package compose
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,7 +17,23 @@ import (
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
+// parseConfig holds optional configuration for parsing.
+type parseConfig struct {
+	baseDir string // base directory for resolving relative env_file paths
+}
+
+// ParseOption configures the compose parser.
+type ParseOption func(*parseConfig)
+
+// WithBaseDir sets the base directory for resolving relative env_file paths.
+func WithBaseDir(dir string) ParseOption {
+	return func(c *parseConfig) {
+		c.baseDir = dir
+	}
+}
+
 // Parse reads a docker-compose.yml file and returns a list of AppSpecs, build contexts, and warnings.
+// It automatically resolves env_file paths relative to the compose file's directory.
 //
 //nolint:revive // Four return values needed for complete compose parsing result
 func Parse(path string) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
@@ -23,13 +41,23 @@ func Parse(path string) (apps []entities.AppSpec, builds map[string]BuildContext
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to read compose file: %w", err)
 	}
-	return ParseBytes(data)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to resolve compose file path: %w", err)
+	}
+	return ParseBytes(data, WithBaseDir(filepath.Dir(absPath)))
 }
 
 // ParseBytes parses docker-compose.yml content and returns a list of AppSpecs, build contexts, and warnings.
+// Use WithBaseDir option to enable env_file resolution relative to the compose file directory.
 //
 //nolint:funlen,gocognit,gocyclo,cyclop,revive // Compose parsing inherently complex with multiple field transformations
-func ParseBytes(data []byte) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
+func ParseBytes(data []byte, opts ...ParseOption) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
+	var cfg parseConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	var cf ComposeFile
 	if err := yaml.Unmarshal(data, &cf); err != nil {
 		return nil, nil, nil, fmt.Errorf("invalid compose file: %w", err)
@@ -78,12 +106,13 @@ func ParseBytes(data []byte) (apps []entities.AppSpec, builds map[string]BuildCo
 			app.Ports = ports
 		}
 
-		// Parse environment.
-		if svc.Environment != nil {
-			env, err := parseEnvironment(svc.Environment)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("service %q: %w", name, err)
-			}
+		// Resolve environment: load env_file(s), parse environment section, substitute variables, merge.
+		env, envWarnings, err := resolveServiceEnv(name, &svc, cfg.baseDir)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		warnings = append(warnings, envWarnings...)
+		if len(env) > 0 {
 			app.Env = env
 		}
 
@@ -138,6 +167,57 @@ func ParseBytes(data []byte) (apps []entities.AppSpec, builds map[string]BuildCo
 	}
 
 	return appList, buildMap, warnings, nil
+}
+
+// resolveServiceEnv loads env_file(s), parses the environment section, resolves ${VAR} references, and merges.
+// Resolution order: env_file values are the base, environment section overrides, ${VAR} resolved from both.
+func resolveServiceEnv(name string, svc *ComposeService, baseDir string) (map[string]string, []string, error) {
+	var warnings []string
+
+	// Step 1: Load env_file(s) into base vars.
+	baseVars := make(map[string]string)
+	if svc.EnvFile != nil {
+		paths, err := parseEnvFileField(svc.EnvFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("service %q: %w", name, err)
+		}
+		for _, p := range paths {
+			// Resolve relative paths against the compose file's directory.
+			if !filepath.IsAbs(p) && baseDir != "" {
+				p = filepath.Join(baseDir, p)
+			}
+			vars, err := LoadEnvFile(p)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("service %q: env_file %s: %v (skipped)", name, p, err))
+				continue
+			}
+			maps.Copy(baseVars, vars)
+		}
+	}
+
+	// Step 2: Parse the environment section (raw, may contain ${VAR} references).
+	var rawEnv map[string]string
+	if svc.Environment != nil {
+		var err error
+		rawEnv, err = parseEnvironment(svc.Environment)
+		if err != nil {
+			return nil, nil, fmt.Errorf("service %q: %w", name, err)
+		}
+	}
+
+	// Step 3: Build substitution context = env_file vars (for resolving ${VAR}).
+	// substituteVars also falls back to os.Environ() for host env vars.
+	var resolvedEnv map[string]string
+	if rawEnv != nil {
+		resolvedEnv = substituteVars(rawEnv, baseVars)
+	}
+
+	// Step 4: Merge — env_file is the base, resolved environment overrides.
+	merged := make(map[string]string, len(baseVars)+len(resolvedEnv))
+	maps.Copy(merged, baseVars)
+	maps.Copy(merged, resolvedEnv)
+
+	return merged, warnings, nil
 }
 
 // parseCommand parses a compose command field which can be a string or list of strings.

@@ -1,6 +1,8 @@
 package compose
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/guilhermebr/goship/pkg/domain/entities"
@@ -538,5 +540,195 @@ services:
 
 	if len(warnings) != 2 {
 		t.Fatalf("expected 2 warnings (depends_on, networks), got %d: %v", len(warnings), warnings)
+	}
+}
+
+func TestParseBytes_EnvFileWithSubstitution(t *testing.T) {
+	// Create a temp dir with an .env file.
+	dir := t.TempDir()
+	envContent := `POSTGRES_USER=awa_user
+POSTGRES_PASSWORD=awa_password
+POSTGRES_DB=awa
+`
+	if err := os.WriteFile(filepath.Join(dir, ".env.compose"), []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	yaml := []byte(`
+services:
+  db:
+    image: postgres:16
+    env_file:
+      - .env.compose
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+`)
+
+	apps, _, _, err := ParseBytes(yaml, WithBaseDir(dir))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+
+	env := apps[0].Env
+	if env["POSTGRES_USER"] != "awa_user" {
+		t.Errorf("POSTGRES_USER = %q, want %q", env["POSTGRES_USER"], "awa_user")
+	}
+	if env["POSTGRES_PASSWORD"] != "awa_password" {
+		t.Errorf("POSTGRES_PASSWORD = %q, want %q", env["POSTGRES_PASSWORD"], "awa_password")
+	}
+	if env["POSTGRES_DB"] != "awa" {
+		t.Errorf("POSTGRES_DB = %q, want %q", env["POSTGRES_DB"], "awa")
+	}
+}
+
+func TestParseBytes_EnvFileOnlyNoEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	envContent := `DB_HOST=localhost
+DB_PORT=5432
+`
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	yaml := []byte(`
+services:
+  app:
+    image: myapp
+    env_file: .env
+`)
+
+	apps, _, _, err := ParseBytes(yaml, WithBaseDir(dir))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	env := apps[0].Env
+	if env["DB_HOST"] != "localhost" {
+		t.Errorf("DB_HOST = %q, want %q", env["DB_HOST"], "localhost")
+	}
+	if env["DB_PORT"] != "5432" {
+		t.Errorf("DB_PORT = %q, want %q", env["DB_PORT"], "5432")
+	}
+}
+
+func TestParseBytes_EnvironmentOverridesEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	envContent := `MODE=production
+PORT=3000
+`
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	yaml := []byte(`
+services:
+  app:
+    image: myapp
+    env_file: .env
+    environment:
+      MODE: development
+`)
+
+	apps, _, _, err := ParseBytes(yaml, WithBaseDir(dir))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	env := apps[0].Env
+	// environment: section should override env_file for same key.
+	if env["MODE"] != "development" {
+		t.Errorf("MODE = %q, want %q (environment should override env_file)", env["MODE"], "development")
+	}
+	// env_file keys not in environment: should be preserved.
+	if env["PORT"] != "3000" {
+		t.Errorf("PORT = %q, want %q", env["PORT"], "3000")
+	}
+}
+
+func TestParseBytes_SubstitutionWithDefault(t *testing.T) {
+	yaml := []byte(`
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-mydb}
+`)
+
+	apps, _, _, err := ParseBytes(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	env := apps[0].Env
+	if env["POSTGRES_USER"] != "postgres" {
+		t.Errorf("POSTGRES_USER = %q, want %q (should use default)", env["POSTGRES_USER"], "postgres")
+	}
+	if env["POSTGRES_DB"] != "mydb" {
+		t.Errorf("POSTGRES_DB = %q, want %q (should use default)", env["POSTGRES_DB"], "mydb")
+	}
+}
+
+func TestParse_EnvFileIntegration(t *testing.T) {
+	// Test the full Parse() flow with a real compose file and env file.
+	dir := t.TempDir()
+
+	envContent := `TEMPORAL_POSTGRES_USER=temporal
+TEMPORAL_POSTGRES_PASSWORD=temporal_pass
+TEMPORAL_POSTGRES_DB=temporal
+`
+	if err := os.WriteFile(filepath.Join(dir, ".env.compose"), []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	composeContent := `
+services:
+  temporal-db:
+    image: postgres:16-alpine
+    env_file:
+      - .env.compose
+    environment:
+      POSTGRES_USER: ${TEMPORAL_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TEMPORAL_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${TEMPORAL_POSTGRES_DB}
+    ports:
+      - "5432:5432"
+`
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(composePath, []byte(composeContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	apps, _, _, err := Parse(composePath)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+
+	env := apps[0].Env
+	if env["POSTGRES_USER"] != "temporal" {
+		t.Errorf("POSTGRES_USER = %q, want %q", env["POSTGRES_USER"], "temporal")
+	}
+	if env["POSTGRES_PASSWORD"] != "temporal_pass" {
+		t.Errorf("POSTGRES_PASSWORD = %q, want %q", env["POSTGRES_PASSWORD"], "temporal_pass")
+	}
+	if env["POSTGRES_DB"] != "temporal" {
+		t.Errorf("POSTGRES_DB = %q, want %q", env["POSTGRES_DB"], "temporal")
+	}
+
+	// env_file vars should also be present (merged as base).
+	if env["TEMPORAL_POSTGRES_USER"] != "temporal" {
+		t.Errorf("TEMPORAL_POSTGRES_USER = %q, want %q", env["TEMPORAL_POSTGRES_USER"], "temporal")
 	}
 }
