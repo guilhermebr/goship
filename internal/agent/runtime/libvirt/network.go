@@ -35,13 +35,17 @@ func EnsureNetwork(conn *libvirt.Connect, name string) error {
 		if name == "default" {
 			return createDefaultNetwork(conn)
 		}
-		return fmt.Errorf("network %q not found in libvirt; create it with: virsh net-define <xml> && virsh net-start %s", name, name)
+		return fmt.Errorf(
+			"network %q not found in libvirt; create it with: virsh net-define <xml> && virsh net-start %s",
+			name,
+			name,
+		)
 	}
 	defer func() { _ = net.Free() }()
 
-	active, err := net.IsActive()
-	if err != nil {
-		return fmt.Errorf("failed to check network %q state: %w", name, err)
+	active, activeErr := net.IsActive()
+	if activeErr != nil {
+		return fmt.Errorf("failed to check network %q state: %w", name, activeErr)
 	}
 
 	if active {
@@ -65,7 +69,7 @@ func EnsureNetwork(conn *libvirt.Connect, name string) error {
 // createDefaultNetwork defines, starts, and enables autostart for the standard
 // libvirt default NAT network.
 func createDefaultNetwork(conn *libvirt.Connect) error {
-	fmt.Fprintf(os.Stderr, "Network \"default\" not found, creating standard NAT network...\n")
+	fmt.Fprint(os.Stderr, "Network \"default\" not found, creating standard NAT network...\n")
 
 	net, err := conn.NetworkDefineXML(defaultNetworkXML)
 	if err != nil {
@@ -81,6 +85,6 @@ func createDefaultNetwork(conn *libvirt.Connect) error {
 		fmt.Fprintf(os.Stderr, "WARNING: could not enable autostart for default network: %v\n", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Default network created and started (192.168.122.0/24 NAT)\n")
+	fmt.Fprint(os.Stderr, "Default network created and started (192.168.122.0/24 NAT)\n")
 	return nil
 }

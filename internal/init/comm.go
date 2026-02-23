@@ -89,7 +89,12 @@ func openDeviceWithRetry(candidates []string, timeout, retryInterval time.Durati
 		}
 		seen[device] = struct{}{}
 		if len(attempted) > 0 {
-			log.Printf("warn: failed to open serial device %s after %s, trying %s", attempted[len(attempted)-1], timeout, device)
+			log.Printf(
+				"warn: failed to open serial device %s after %s, trying %s",
+				attempted[len(attempted)-1],
+				timeout,
+				device,
+			)
 		}
 		attempted = append(attempted, device)
 
@@ -98,7 +103,11 @@ func openDeviceWithRetry(candidates []string, timeout, retryInterval time.Durati
 		}
 	}
 
-	return nil, fmt.Errorf("failed to open serial device (tried %v, elapsed %s)", attempted, time.Since(start).Round(time.Millisecond))
+	return nil, fmt.Errorf(
+		"failed to open serial device (tried %v, elapsed %s)",
+		attempted,
+		time.Since(start).Round(time.Millisecond),
+	)
 }
 
 func tryOpenUntil(device string, timeout, retryInterval time.Duration) (*os.File, error) {
@@ -191,7 +200,7 @@ func isTransientDeviceReadError(device io.ReadWriteCloser, err error) bool {
 	if err == nil {
 		return false
 	}
-	if err != io.EOF && !errors.Is(err, syscall.EIO) {
+	if !errors.Is(err, io.EOF) && !errors.Is(err, syscall.EIO) {
 		return false
 	}
 

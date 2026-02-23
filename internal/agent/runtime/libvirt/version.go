@@ -18,7 +18,7 @@ func GetVersionInfo() (*VersionInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _, _ = conn.Close() }()
 
 	// Get libvirt version
 	libVer, err := conn.GetLibVersion()
@@ -41,8 +41,12 @@ func GetVersionInfo() (*VersionInfo, error) {
 // formatVersion formats a libvirt encoded version (major*1000000 + minor*1000 + patch)
 // into a "major.minor.patch" string.
 func formatVersion(ver uint32) string {
-	major := ver / 1000000
-	minor := (ver / 1000) % 1000
-	patch := ver % 1000
+	const (
+		majorDivisor = 1000000
+		minorDivisor = 1000
+	)
+	major := ver / majorDivisor
+	minor := (ver / minorDivisor) % minorDivisor
+	patch := ver % minorDivisor
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch)
 }

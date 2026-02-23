@@ -36,13 +36,13 @@ func TestCreateDiskImage_Success(t *testing.T) {
 	}
 
 	// Create CoW disk backed by the base image.
-	if err := CreateDiskImage(basePath, diskPath); err != nil {
-		t.Fatalf("CreateDiskImage failed: %v", err)
+	if createErr := CreateDiskImage(basePath, diskPath); createErr != nil {
+		t.Fatalf("CreateDiskImage failed: %v", createErr)
 	}
 
 	// Verify file exists.
-	if _, err := os.Stat(diskPath); err != nil {
-		t.Fatalf("disk image not created: %v", err)
+	if _, statErr := os.Stat(diskPath); statErr != nil {
+		t.Fatalf("disk image not created: %v", statErr)
 	}
 
 	// Verify backing file with qemu-img info.

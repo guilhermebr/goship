@@ -59,8 +59,8 @@ func (c *VMCommunicator) SendCommand(ctx context.Context, cmd *v1.InitCommand) (
 	}
 	data = append(data, '\n')
 
-	if _, err := c.conn.Write(data); err != nil {
-		return nil, fmt.Errorf("failed to write command: %w", err)
+	if _, writeErr := c.conn.Write(data); writeErr != nil {
+		return nil, fmt.Errorf("failed to write command: %w", writeErr)
 	}
 
 	// Read response line.

@@ -17,6 +17,11 @@ import (
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
+const (
+	containerStateExited       = "exited"
+	bytesPerMegabyte     int64 = 1024 * 1024
+)
+
 // DockerManager manages Docker containers inside the VM.
 // Implements the AppExecutor interface.
 type DockerManager struct {
@@ -41,12 +46,14 @@ func (m *DockerManager) LoadImage(ctx context.Context, reader io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("failed to load image: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
 // Deploy deploys a container for the given app spec.
+//
+//nolint:funlen,gocognit,revive // Container deployment requires multiple configuration steps
 func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error {
 	// Build full image reference.
 	imageRef := app.Image
@@ -64,7 +71,7 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 		if err != nil {
 			return fmt.Errorf("failed to pull image %s: %w", imageRef, err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 		_, _ = io.Copy(io.Discard, reader) // Wait for pull to complete.
 	}
 
@@ -114,7 +121,7 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 
 	// Apply resource limits.
 	if app.Resources.MemoryMB > 0 {
-		hostConfig.Memory = app.Resources.MemoryMB * 1024 * 1024
+		hostConfig.Memory = app.Resources.MemoryMB * bytesPerMegabyte
 	}
 	if app.Resources.CPU > 0 {
 		hostConfig.NanoCPUs = int64(app.Resources.CPU * 1e9)
@@ -134,8 +141,9 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 	for _, c := range containers {
 		for _, name := range c.Names {
 			if name == "/"+containerName {
-				if err := m.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-					return fmt.Errorf("failed to remove existing container: %w", err)
+				removeOpts := container.RemoveOptions{Force: true}
+				if removeErr := m.client.ContainerRemove(ctx, c.ID, removeOpts); removeErr != nil {
+					return fmt.Errorf("failed to remove existing container: %w", removeErr)
 				}
 				break
 			}
@@ -183,6 +191,8 @@ func (m *DockerManager) Remove(ctx context.Context, appName string) error {
 }
 
 // GetStatus returns the status of all GoShip-managed containers.
+//
+//nolint:gocognit,nestif,revive // Container status extraction requires parsing Docker API responses
 func (m *DockerManager) GetStatus(ctx context.Context) ([]v1.AppStatus, error) {
 	containers, err := m.client.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
@@ -192,8 +202,8 @@ func (m *DockerManager) GetStatus(ctx context.Context) ([]v1.AppStatus, error) {
 	var statuses []v1.AppStatus
 	for _, c := range containers {
 		for _, name := range c.Names {
-			if strings.HasPrefix(name, "/goship-") {
-				appName := strings.TrimPrefix(name, "/goship-")
+			if after, ok := strings.CutPrefix(name, "/goship-"); ok {
+				appName := after
 				status := v1.AppStatus{
 					Name:          appName,
 					ExecutionMode: entities.ExecutionModeContainer,
@@ -214,8 +224,9 @@ func (m *DockerManager) GetStatus(ctx context.Context) ([]v1.AppStatus, error) {
 				if c.State == "running" {
 					inspect, err := m.client.ContainerInspect(ctx, c.ID)
 					if err == nil {
-						startedAt, _ := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
-						status.StartedAt = &startedAt
+						if startedAt, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
+							status.StartedAt = &startedAt
+						}
 					}
 				}
 
@@ -269,7 +280,7 @@ func toAppState(state string) entities.AppState {
 	switch state {
 	case "running":
 		return entities.AppStateRunning
-	case "exited", "dead":
+	case containerStateExited, "dead":
 		return entities.AppStateStopped
 	case "created", "restarting":
 		return entities.AppStatePending

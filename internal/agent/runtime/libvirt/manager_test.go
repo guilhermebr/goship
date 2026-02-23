@@ -92,11 +92,11 @@ func TestEnsurePathTraversable(t *testing.T) {
 	restricted := filepath.Join(root, "restricted")
 	inner := filepath.Join(restricted, "inner", "deep")
 
-	if err := os.MkdirAll(inner, 0755); err != nil {
+	if err := os.MkdirAll(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Remove o+x from the restricted dir.
-	if err := os.Chmod(restricted, 0700); err != nil {
+	if err := os.Chmod(restricted, 0o700); err != nil {
 		t.Fatal(err)
 	}
 

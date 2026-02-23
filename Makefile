@@ -60,20 +60,20 @@ test-coverage:
 	$(GOTEST) -v -race -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 
-# Format code
+# Format code (golangci-lint v2 handles gci, gofmt, gofumpt, goimports, golines)
 fmt:
 	@echo "Formatting code..."
-	$(GOFMT) -s -w .
+	golangci-lint fmt ./...
 
 # Vet code
 vet:
 	@echo "Vetting code..."
 	$(GOVET) ./...
 
-# Lint code (requires golangci-lint)
+# Lint code (requires golangci-lint v2)
 lint:
 	@echo "Linting code..."
-	golangci-lint run
+	golangci-lint run ./...
 
 # Tidy dependencies
 tidy:

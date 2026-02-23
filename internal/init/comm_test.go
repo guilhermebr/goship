@@ -162,7 +162,7 @@ func TestListenInvalidJSON(t *testing.T) {
 	comm, hostWriter, hostReader := newTestPipes(t)
 
 	go func() {
-		_, _ = hostWriter.Write([]byte("not json\n"))
+		_, _ = hostWriter.WriteString("not json\n")
 		hostWriter.Close()
 	}()
 
@@ -259,7 +259,7 @@ func TestListenMultipleCommands(t *testing.T) {
 	reader := bufio.NewReader(hostReader)
 
 	// Read two responses.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			t.Fatalf("command %d: failed to read response: %v", i, err)

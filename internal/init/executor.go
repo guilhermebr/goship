@@ -2,7 +2,7 @@ package gsinit
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
@@ -36,12 +36,12 @@ func NewExecutorManager(docker *DockerManager, process *ProcessManager) *Executo
 func (m *ExecutorManager) GetExecutor(app *entities.AppSpec) (AppExecutor, error) {
 	if app.IsProcessMode() {
 		if m.process == nil {
-			return nil, fmt.Errorf("process executor is not available")
+			return nil, errors.New("process executor is not available")
 		}
 		return m.process, nil
 	}
 	if m.docker == nil {
-		return nil, fmt.Errorf("docker executor is not available")
+		return nil, errors.New("docker executor is not available")
 	}
 	return m.docker, nil
 }

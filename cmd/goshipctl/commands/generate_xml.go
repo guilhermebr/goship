@@ -13,8 +13,9 @@ import (
 var generateXMLCmd = &cobra.Command{
 	Use:   "generate-xml",
 	Short: "Generate libvirt domain XML",
-	Long:  `Generates a libvirt domain XML definition from the provided flags. No libvirt connection required. Useful for experimenting with VM configurations.`,
-	RunE:  runGenerateXML,
+	Long: `Generates a libvirt domain XML definition from the provided flags. No libvirt connection required.
+Useful for experimenting with VM configurations.`,
+	RunE: runGenerateXML,
 }
 
 func init() {
@@ -30,21 +31,48 @@ func init() {
 }
 
 func runGenerateXML(cmd *cobra.Command, args []string) error {
-	name, _ := cmd.Flags().GetString("name")
-	uuid, _ := cmd.Flags().GetString("uuid")
-	memory, _ := cmd.Flags().GetInt64("memory")
-	cpus, _ := cmd.Flags().GetInt("cpus")
-	enableKVM, _ := cmd.Flags().GetBool("enable-kvm")
-	diskPath, _ := cmd.Flags().GetString("disk-path")
-	diskFormat, _ := cmd.Flags().GetString("disk-format")
-	networkType, _ := cmd.Flags().GetString("network-type")
-	networkSource, _ := cmd.Flags().GetString("network-source")
+	name, err := cmd.Flags().GetString("name")
+	if err != nil {
+		return fmt.Errorf("invalid --name flag: %w", err)
+	}
+	uuid, err := cmd.Flags().GetString("uuid")
+	if err != nil {
+		return fmt.Errorf("invalid --uuid flag: %w", err)
+	}
+	memory, err := cmd.Flags().GetInt64("memory")
+	if err != nil {
+		return fmt.Errorf("invalid --memory flag: %w", err)
+	}
+	cpus, err := cmd.Flags().GetInt("cpus")
+	if err != nil {
+		return fmt.Errorf("invalid --cpus flag: %w", err)
+	}
+	enableKVM, err := cmd.Flags().GetBool("enable-kvm")
+	if err != nil {
+		return fmt.Errorf("invalid --enable-kvm flag: %w", err)
+	}
+	diskPath, err := cmd.Flags().GetString("disk-path")
+	if err != nil {
+		return fmt.Errorf("invalid --disk-path flag: %w", err)
+	}
+	diskFormat, err := cmd.Flags().GetString("disk-format")
+	if err != nil {
+		return fmt.Errorf("invalid --disk-format flag: %w", err)
+	}
+	networkType, err := cmd.Flags().GetString("network-type")
+	if err != nil {
+		return fmt.Errorf("invalid --network-type flag: %w", err)
+	}
+	networkSource, err := cmd.Flags().GetString("network-source")
+	if err != nil {
+		return fmt.Errorf("invalid --network-source flag: %w", err)
+	}
 
 	if uuid == "" {
-		var err error
-		uuid, err = libvirt.GenerateUUID()
-		if err != nil {
-			return fmt.Errorf("failed to generate UUID: %w", err)
+		var uuidErr error
+		uuid, uuidErr = libvirt.GenerateUUID()
+		if uuidErr != nil {
+			return fmt.Errorf("failed to generate UUID: %w", uuidErr)
 		}
 	}
 

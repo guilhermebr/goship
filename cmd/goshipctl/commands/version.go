@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	libvirtRuntime "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 	"github.com/spf13/cobra"
+
+	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 )
 
 // versionCmd prints version information and libvirt/QEMU details.
@@ -20,7 +21,7 @@ func runVersion(cmd *cobra.Command, args []string) {
 	fmt.Printf("  commit: %s\n", commit)
 	fmt.Printf("  built:  %s\n", buildTime)
 
-	info, err := libvirtRuntime.GetVersionInfo()
+	info, err := lvrt.GetVersionInfo()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nLibvirt: unavailable (%v)\n", err)
 		return

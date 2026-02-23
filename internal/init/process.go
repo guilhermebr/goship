@@ -2,6 +2,7 @@ package gsinit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -23,6 +24,8 @@ const (
 	maxRestarts = 5
 	// maxBackoff is the maximum backoff delay between restarts.
 	maxBackoff = 30 * time.Second
+	// minProcStatusFields is the minimum number of fields expected in /proc/[pid]/status State line.
+	minProcStatusFields = 2
 )
 
 // ProcessManager manages direct processes inside the VM.
@@ -79,7 +82,7 @@ func (m *ProcessManager) Deploy(ctx context.Context, app *entities.AppSpec) erro
 
 	binary := app.Binary
 	if binary == "" {
-		return fmt.Errorf("binary path is required for process mode")
+		return errors.New("binary path is required for process mode")
 	}
 
 	if _, err := os.Stat(binary); os.IsNotExist(err) {
@@ -103,7 +106,7 @@ func (m *ProcessManager) Deploy(ctx context.Context, app *entities.AppSpec) erro
 
 	// Open log file for stdout/stderr.
 	logPath := processLogPath(app.Name)
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to open log file %s: %w", logPath, err)
 	}
@@ -124,7 +127,7 @@ func (m *ProcessManager) Deploy(ctx context.Context, app *entities.AppSpec) erro
 	}
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
+		_ = logFile.Close()
 		return fmt.Errorf("failed to start process: %w", err)
 	}
 
@@ -182,7 +185,7 @@ func (m *ProcessManager) Remove(ctx context.Context, appName string) error {
 	proc.stopping = true
 	m.stopProcess(proc)
 	if proc.logFile != nil {
-		proc.logFile.Close()
+		_ = proc.logFile.Close()
 	}
 	delete(m.processes, appName)
 	return nil
@@ -236,7 +239,7 @@ func (m *ProcessManager) Close() error {
 		proc.stopping = true
 		m.stopProcess(proc)
 		if proc.logFile != nil {
-			proc.logFile.Close()
+			_ = proc.logFile.Close()
 		}
 	}
 	m.processes = make(map[string]*managedProcess)
@@ -262,6 +265,8 @@ func (m *ProcessManager) stopProcess(proc *managedProcess) {
 }
 
 // monitorProcess waits for process exit and handles auto-restart.
+//
+//nolint:funlen // Process monitoring includes restart logic with backoff
 func (m *ProcessManager) monitorProcess(proc *managedProcess) {
 	if proc.cmd == nil {
 		close(proc.done)
@@ -291,13 +296,13 @@ func (m *ProcessManager) monitorProcess(proc *managedProcess) {
 	}
 
 	// Determine if we should restart.
-	shouldRestart := false
+	var shouldRestart bool
 	switch proc.restartPolicy {
 	case entities.RestartPolicyAlways:
 		shouldRestart = true
 	case entities.RestartPolicyOnFailure:
 		shouldRestart = err != nil
-	case entities.RestartPolicyNever, "":
+	default: // entities.RestartPolicyNever, "", or unknown
 		shouldRestart = false
 	}
 
@@ -323,10 +328,7 @@ func (m *ProcessManager) monitorProcess(proc *managedProcess) {
 	m.mu.Unlock()
 
 	// Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s.
-	backoff := time.Duration(math.Pow(2, float64(restartCount-1))) * time.Second
-	if backoff > maxBackoff {
-		backoff = maxBackoff
-	}
+	backoff := min(time.Duration(math.Pow(2, float64(restartCount-1)))*time.Second, maxBackoff)
 
 	log.Printf("process %s: restarting in %s (attempt %d/%d)", proc.name, backoff, restartCount, maxRestarts)
 	time.Sleep(backoff)
@@ -382,10 +384,10 @@ func getProcessStatus(pid int) string {
 		return "exited"
 	}
 
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if strings.HasPrefix(line, "State:") {
 			fields := strings.Fields(line)
-			if len(fields) >= 2 {
+			if len(fields) >= minProcStatusFields {
 				// Return the state description, e.g., "S (sleeping)", "R (running)"
 				return strings.Join(fields[1:], " ")
 			}

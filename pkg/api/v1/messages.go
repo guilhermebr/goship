@@ -8,13 +8,13 @@ import (
 
 // Action constants for the GoShip Init protocol.
 const (
-	ActionDeploy     = "deploy"
-	ActionStop       = "stop"
-	ActionRemove     = "remove"
-	ActionStatus     = "status"
-	ActionPing       = "ping"
-	ActionLogs       = "logs"
-	ActionUpdateInit    = "update-init"
+	ActionDeploy       = "deploy"
+	ActionStop         = "stop"
+	ActionRemove       = "remove"
+	ActionStatus       = "status"
+	ActionPing         = "ping"
+	ActionLogs         = "logs"
+	ActionUpdateInit   = "update-init"
 	ActionUploadBinary = "upload-binary"
 	ActionUploadImage  = "upload-image"
 )
@@ -27,11 +27,11 @@ const (
 
 // InitCommand is a message sent from the host to the GoShip Init agent inside a VM.
 type InitCommand struct {
-	Action  string             `json:"action"`
-	App     *entities.AppSpec  `json:"app,omitempty"`      // App spec for deploy action.
-	AppName string             `json:"app_name,omitempty"`
-	Lines   int                `json:"lines,omitempty"`
-	LogFile string             `json:"log_file,omitempty"` // Path to log file (default: goship-init.log)
+	Action  string            `json:"action"`
+	App     *entities.AppSpec `json:"app,omitempty"` // App spec for deploy action.
+	AppName string            `json:"app_name,omitempty"`
+	Lines   int               `json:"lines,omitempty"`
+	LogFile string            `json:"log_file,omitempty"` // Path to log file (default: goship-init.log)
 
 	// Fields for chunked transfer protocol (update-init, upload-binary, upload-image).
 	Phase    string `json:"phase,omitempty"`     // "begin", "data", "finish"
@@ -64,9 +64,11 @@ type VMInfo struct {
 }
 
 // ContainerState represents the lifecycle state of a container.
+//
 // Deprecated: Use entities.AppState instead for new code.
 type ContainerState string
 
+// ContainerState constants define the lifecycle states.
 const (
 	ContainerStatePending ContainerState = "pending"
 	ContainerStateRunning ContainerState = "running"
@@ -75,6 +77,7 @@ const (
 )
 
 // ContainerStatus represents the status of a container inside a VM.
+//
 // Deprecated: Use AppStatus instead for new code.
 type ContainerStatus struct {
 	Name      string                 `json:"name"`
@@ -88,16 +91,16 @@ type ContainerStatus struct {
 
 // AppStatus represents the status of an app (container or process) inside a VM.
 type AppStatus struct {
-	Name          string                  `json:"name"`
-	ExecutionMode entities.ExecutionMode  `json:"execution_mode"`
-	ID            string                  `json:"id"`
-	Image         string                  `json:"image,omitempty"`
-	Binary        string                  `json:"binary,omitempty"`
-	State         entities.AppState       `json:"state"`
-	Status        string                  `json:"status"`
-	Ports         []entities.PortMapping  `json:"ports,omitempty"`
-	StartedAt     *time.Time              `json:"started_at,omitempty"`
-	RestartCount  int                     `json:"restart_count,omitempty"`
+	Name          string                 `json:"name"`
+	ExecutionMode entities.ExecutionMode `json:"execution_mode"`
+	ID            string                 `json:"id"`
+	Image         string                 `json:"image,omitempty"`
+	Binary        string                 `json:"binary,omitempty"`
+	State         entities.AppState      `json:"state"`
+	Status        string                 `json:"status"`
+	Ports         []entities.PortMapping `json:"ports,omitempty"`
+	StartedAt     *time.Time             `json:"started_at,omitempty"`
+	RestartCount  int                    `json:"restart_count,omitempty"`
 }
 
 // ToContainerStatus converts AppStatus to ContainerStatus for backwards compatibility.

@@ -67,7 +67,7 @@ func performInitDuties() {
 		if isMounted(m.target) {
 			continue
 		}
-		if err := os.MkdirAll(m.target, 0755); err != nil {
+		if err := os.MkdirAll(m.target, 0o755); err != nil {
 			log.Printf("warn: failed to create mount point %s: %v", m.target, err)
 			continue
 		}
@@ -112,7 +112,7 @@ func isMounted(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[1] == path {
 			return true

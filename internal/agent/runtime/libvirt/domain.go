@@ -146,6 +146,10 @@ const domainXMLTemplate = `<domain type='{{if .EnableKVM}}kvm{{else}}qemu{{end}}
 
 // diskLetter returns the disk letter for the given index (a, b, c, ...).
 func diskLetter(i int) string {
+	// Safe conversion: disk indices are small (typically 0-25)
+	if i < 0 || i > 25 {
+		i = 0 // Fallback to 'a'
+	}
 	return string(rune('a' + i))
 }
 

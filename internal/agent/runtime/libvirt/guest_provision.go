@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,7 +48,7 @@ type GuestProvisionOptions struct {
 // a guest disk before VM boot.
 func CheckGuestProvisionDependencies() error {
 	if _, err := lookPath("virt-customize"); err != nil {
-		return fmt.Errorf("virt-customize not found (install: sudo apt install libguestfs-tools)")
+		return errors.New("virt-customize not found (install: sudo apt install libguestfs-tools)")
 	}
 	return nil
 }
@@ -55,10 +56,10 @@ func CheckGuestProvisionDependencies() error {
 // ProvisionGuestDisk injects goship-init and service wiring into a VM overlay disk.
 func ProvisionGuestDisk(opts GuestProvisionOptions) error {
 	if opts.DiskPath == "" {
-		return fmt.Errorf("disk path is required")
+		return errors.New("disk path is required")
 	}
 	if opts.InitBinaryPath == "" {
-		return fmt.Errorf("goship-init binary path is required")
+		return errors.New("goship-init binary path is required")
 	}
 	if _, err := os.Stat(opts.DiskPath); err != nil {
 		return fmt.Errorf("disk not found: %w", err)
@@ -74,32 +75,32 @@ func ProvisionGuestDisk(opts GuestProvisionOptions) error {
 	if err != nil {
 		return fmt.Errorf("creating temp service file: %w", err)
 	}
-	defer os.Remove(serviceFile.Name())
+	defer func() { _ = os.Remove(serviceFile.Name()) }()
 
-	if _, err := serviceFile.WriteString(openrcServiceScript); err != nil {
-		serviceFile.Close()
-		return fmt.Errorf("writing service script: %w", err)
+	if _, writeErr := serviceFile.WriteString(openrcServiceScript); writeErr != nil {
+		_ = serviceFile.Close()
+		return fmt.Errorf("writing service script: %w", writeErr)
 	}
-	if err := serviceFile.Chmod(0o755); err != nil {
-		serviceFile.Close()
-		return fmt.Errorf("setting service script permissions: %w", err)
+	if chmodErr := serviceFile.Chmod(0o755); chmodErr != nil {
+		_ = serviceFile.Close()
+		return fmt.Errorf("setting service script permissions: %w", chmodErr)
 	}
-	if err := serviceFile.Close(); err != nil {
-		return fmt.Errorf("closing service script: %w", err)
+	if closeErr := serviceFile.Close(); closeErr != nil {
+		return fmt.Errorf("closing service script: %w", closeErr)
 	}
 
 	resolvFile, err := os.CreateTemp("", "goship-resolv-*")
 	if err != nil {
 		return fmt.Errorf("creating temp resolv.conf: %w", err)
 	}
-	defer os.Remove(resolvFile.Name())
+	defer func() { _ = os.Remove(resolvFile.Name()) }()
 
-	if _, err := resolvFile.WriteString(defaultResolvConf); err != nil {
-		resolvFile.Close()
-		return fmt.Errorf("writing resolv.conf: %w", err)
+	if _, writeErr := resolvFile.WriteString(defaultResolvConf); writeErr != nil {
+		_ = resolvFile.Close()
+		return fmt.Errorf("writing resolv.conf: %w", writeErr)
 	}
-	if err := resolvFile.Close(); err != nil {
-		return fmt.Errorf("closing resolv.conf: %w", err)
+	if closeErr := resolvFile.Close(); closeErr != nil {
+		return fmt.Errorf("closing resolv.conf: %w", closeErr)
 	}
 
 	args := buildVirtCustomizeArgs(opts, serviceFile.Name(), resolvFile.Name())

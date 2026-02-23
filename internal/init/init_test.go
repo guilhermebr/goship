@@ -12,17 +12,19 @@ import (
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 )
 
-func newTestInit(t *testing.T) (*Init, *os.File, *os.File) {
+//nolint:unparam // Test helper returns consistent signature for flexibility
+func newTestInit(t *testing.T) (agent *Init, hostWriter *os.File, hostReader *os.File) {
 	t.Helper()
 	comm, hostWriter, hostReader := newTestPipes(t)
-	agent := newFromCommunicator(comm)
+	agent = newFromCommunicator(comm)
 	return agent, hostWriter, hostReader
 }
 
-func newTestInitWithDir(t *testing.T, dir string) (*Init, *os.File, *os.File) {
+//nolint:unparam // Test helper returns consistent signature for flexibility
+func newTestInitWithDir(t *testing.T, dir string) (agent *Init, hostWriter *os.File, hostReader *os.File) {
 	t.Helper()
 	comm, hostWriter, hostReader := newTestPipes(t)
-	agent := newFromCommunicatorWithDir(comm, dir)
+	agent = newFromCommunicatorWithDir(comm, dir)
 	return agent, hostWriter, hostReader
 }
 
@@ -68,7 +70,7 @@ func TestHandleLogs(t *testing.T) {
 	// Create a temporary log file.
 	tmpFile := t.TempDir() + "/goship-init.log"
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,12 +105,12 @@ func TestShutdown(t *testing.T) {
 
 	agent.Shutdown()
 
-	// Context should be cancelled.
+	// Context should be canceled.
 	select {
 	case <-agent.ctx.Done():
 		// Expected.
 	default:
-		t.Fatal("expected context to be cancelled after Shutdown")
+		t.Fatal("expected context to be canceled after Shutdown")
 	}
 }
 
@@ -184,7 +186,7 @@ func TestHandleUpdateInit_FullCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to stat binary: %v", err)
 	}
-	if info.Mode()&0111 == 0 {
+	if info.Mode()&0o111 == 0 {
 		t.Fatalf("binary is not executable: mode=%v", info.Mode())
 	}
 

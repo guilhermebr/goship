@@ -15,6 +15,7 @@ const (
 // AppState represents the lifecycle state of an app (container or process).
 type AppState string
 
+// AppState constants define the lifecycle states.
 const (
 	AppStatePending AppState = "pending"
 	AppStateRunning AppState = "running"
@@ -25,6 +26,7 @@ const (
 // RestartPolicy defines the container restart behavior.
 type RestartPolicy string
 
+// RestartPolicy constants define the restart behaviors.
 const (
 	RestartPolicyAlways    RestartPolicy = "always"
 	RestartPolicyOnFailure RestartPolicy = "on-failure"
@@ -108,7 +110,7 @@ type AppSpec struct {
 	// Volume mounts (for containers) or bind mounts (for processes)
 	Volumes []VolumeMount `json:"volumes,omitempty"`
 	// Resource limits
-	Resources Resources `json:"resources,omitempty"`
+	Resources Resources `json:"resources"`
 	// Health check configuration
 	HealthCheck *HealthCheck `json:"health_check,omitempty"`
 	// Restart policy
@@ -125,7 +127,7 @@ type AppSpec struct {
 	// Tags for organization and filtering
 	Tags []string `json:"tags,omitempty"`
 	// CreatedAt timestamp when the app was created
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
 // IsContainerMode returns true if the app runs as a container.

@@ -54,7 +54,7 @@ func TestInitCommand_OmitEmptyAppName(t *testing.T) {
 	}
 
 	// app_name should be omitted when empty.
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Unmarshal to map failed: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestInitResponse_OmitEmptyError(t *testing.T) {
 		t.Fatalf("Marshal failed: %v", err)
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Unmarshal to map failed: %v", err)
 	}

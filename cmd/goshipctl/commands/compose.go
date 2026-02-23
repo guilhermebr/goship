@@ -13,8 +13,10 @@ import (
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
-var composeFile string
-var composeBuild bool
+var (
+	composeFile  string
+	composeBuild bool
+)
 
 var composeCmd = &cobra.Command{
 	Use:   "compose",
@@ -53,6 +55,7 @@ func init() {
 	composeCmd.AddCommand(composePsCmd)
 }
 
+//nolint:funlen,gocognit,gocyclo,cyclop,nestif,revive // Complex CLI handler
 func runComposeUp(cmd *cobra.Command, args []string) error {
 	projectName := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -100,13 +103,13 @@ func runComposeUp(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(out, "FAILED\n%s\n", string(output))
 				return fmt.Errorf("docker build failed for service %q: %w", svcName, err)
 			}
-			fmt.Fprintf(out, "OK\n")
+			fmt.Fprint(out, "OK\n")
 
 			fmt.Fprintf(out, "  Pushing %s to VM... ", bc.ImageName)
 			if err := pushLocalImage(ctx, out, instance.ID, bc.ImageName); err != nil {
 				return fmt.Errorf("failed to push image for service %q: %w", svcName, err)
 			}
-			fmt.Fprintf(out, "OK\n")
+			fmt.Fprint(out, "OK\n")
 		}
 		fmt.Fprintln(out)
 	} else if !composeBuild && len(builds) > 0 {
@@ -128,7 +131,13 @@ func runComposeUp(cmd *cobra.Command, args []string) error {
 	if vmCPUs > 0 {
 		for i := range apps {
 			if apps[i].Resources.CPU > vmCPUs {
-				fmt.Fprintf(out, "Warning: service %q: cpus %.2f exceeds VM limit (%.0f), capping\n", apps[i].Name, apps[i].Resources.CPU, vmCPUs)
+				fmt.Fprintf(
+					out,
+					"Warning: service %q: cpus %.2f exceeds VM limit (%.0f), capping\n",
+					apps[i].Name,
+					apps[i].Resources.CPU,
+					vmCPUs,
+				)
 				apps[i].Resources.CPU = vmCPUs
 			}
 		}
@@ -151,7 +160,7 @@ func runComposeUp(cmd *cobra.Command, args []string) error {
 		}
 
 		deployed++
-		fmt.Fprintf(out, "OK\n")
+		fmt.Fprint(out, "OK\n")
 	}
 
 	fmt.Fprintf(out, "\n%d/%d service(s) deployed.\n", deployed, len(apps))
@@ -199,7 +208,7 @@ func runComposeDown(cmd *cobra.Command, args []string) error {
 		}
 
 		removed++
-		fmt.Fprintf(out, "OK\n")
+		fmt.Fprint(out, "OK\n")
 	}
 
 	fmt.Fprintf(out, "\n%d/%d service(s) removed.\n", removed, len(apps))

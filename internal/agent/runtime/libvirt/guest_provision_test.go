@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ func TestCheckGuestProvisionDependencies_MissingVirtCustomize(t *testing.T) {
 
 	lookPath = func(file string) (string, error) {
 		if file == "virt-customize" {
-			return "", fmt.Errorf("not found")
+			return "", errors.New("not found")
 		}
 		return "/usr/bin/" + file, nil
 	}

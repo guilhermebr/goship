@@ -17,7 +17,8 @@ import (
 
 const (
 	// Default image source is the Alpine cloud image used as a plain base.
-	defaultImageURL    = "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/cloud/nocloud_alpine-3.23.3-x86_64-bios-cloudinit-r0.qcow2"
+	defaultImageURL = "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/cloud/" +
+		"nocloud_alpine-3.23.3-x86_64-bios-cloudinit-r0.qcow2"
 	defaultImageOutput = "~/.goship/images/goship-vm.qcow2"
 
 	// Local build settings (--build mode).
@@ -61,8 +62,14 @@ func init() {
 }
 
 func runImagePull(cmd *cobra.Command, args []string) error {
-	output, _ := cmd.Flags().GetString("output")
-	force, _ := cmd.Flags().GetBool("force")
+	output, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return fmt.Errorf("invalid --output flag: %w", err)
+	}
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return fmt.Errorf("invalid --force flag: %w", err)
+	}
 
 	output = expandPath(output)
 
@@ -73,9 +80,15 @@ func runImagePull(cmd *cobra.Command, args []string) error {
 		}
 		// Warn about VMs backed by this image.
 		if vms := checkExistingVMs(output); len(vms) > 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "WARNING: The following VMs have disks backed by this image and must be recreated:\n")
+			fmt.Fprint(
+				cmd.OutOrStdout(),
+				"WARNING: The following VMs have disks backed by this image and must be recreated:\n",
+			)
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Join(vms, ", "))
-			fmt.Fprintf(cmd.OutOrStdout(), "  Run 'goshipctl vm destroy <name>' then 'goshipctl vm create <name>' to recreate\n\n")
+			fmt.Fprint(
+				cmd.OutOrStdout(),
+				"  Run 'goshipctl vm destroy <name>' then 'goshipctl vm create <name>' to recreate\n\n",
+			)
 		}
 	}
 
@@ -89,9 +102,18 @@ func runImagePull(cmd *cobra.Command, args []string) error {
 }
 
 func runImageBuildCmd(cmd *cobra.Command, args []string) error {
-	output, _ := cmd.Flags().GetString("output")
-	force, _ := cmd.Flags().GetBool("force")
-	imageSize, _ := cmd.Flags().GetString("image-size")
+	output, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return fmt.Errorf("invalid --output flag: %w", err)
+	}
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return fmt.Errorf("invalid --force flag: %w", err)
+	}
+	imageSize, err := cmd.Flags().GetString("image-size")
+	if err != nil {
+		return fmt.Errorf("invalid --image-size flag: %w", err)
+	}
 
 	output = expandPath(output)
 
@@ -102,9 +124,15 @@ func runImageBuildCmd(cmd *cobra.Command, args []string) error {
 		}
 		// Warn about VMs backed by this image.
 		if vms := checkExistingVMs(output); len(vms) > 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "WARNING: The following VMs have disks backed by this image and must be recreated:\n")
+			fmt.Fprint(
+				cmd.OutOrStdout(),
+				"WARNING: The following VMs have disks backed by this image and must be recreated:\n",
+			)
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Join(vms, ", "))
-			fmt.Fprintf(cmd.OutOrStdout(), "  Run 'goshipctl vm destroy <name>' then 'goshipctl vm create <name>' to recreate\n\n")
+			fmt.Fprint(
+				cmd.OutOrStdout(),
+				"  Run 'goshipctl vm destroy <name>' then 'goshipctl vm create <name>' to recreate\n\n",
+			)
 		}
 	}
 
@@ -124,24 +152,24 @@ func runImageBuildCmd(cmd *cobra.Command, args []string) error {
 func runImageDownload(w io.Writer, output string) error {
 	tmpFile := filepath.Join(filepath.Dir(output), "."+filepath.Base(output)+".tmp")
 
-	fmt.Fprintf(w, "Downloading GoShip VM base image...\n")
+	fmt.Fprint(w, "Downloading GoShip VM base image...\n")
 	fmt.Fprintf(w, "  URL:    %s\n", defaultImageURL)
 	fmt.Fprintf(w, "  Output: %s\n\n", output)
 
 	if err := downloadFile(w, defaultImageURL, tmpFile); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("download failed: %w", err)
 	}
 
 	info, err := os.Stat(tmpFile)
 	if err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("verifying download: %w", err)
 	}
 
 	// Atomic rename from temp to final path.
 	if err := os.Rename(tmpFile, output); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("finalizing image: %w", err)
 	}
 
@@ -156,48 +184,48 @@ func runImageBuild(w io.Writer, output, imageSize string) error {
 	tmpFile := filepath.Join(filepath.Dir(output), "."+filepath.Base(output)+".tmp")
 
 	// [1/3] Preflight checks.
-	fmt.Fprintf(w, "[1/3] Preflight checks...\n")
+	fmt.Fprint(w, "[1/3] Preflight checks...\n")
 
 	if err := checkBuildDependencies(); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(w, "  qemu-img:    found\n")
-	fmt.Fprintf(w, "\n")
+	fmt.Fprint(w, "  qemu-img:    found\n")
+	fmt.Fprint(w, "\n")
 
 	// [2/3] Download Alpine base image to temp file.
-	fmt.Fprintf(w, "[2/3] Downloading Alpine base image...\n")
+	fmt.Fprint(w, "[2/3] Downloading Alpine base image...\n")
 	fmt.Fprintf(w, "  URL:    %s\n", alpineImageURL)
 	fmt.Fprintf(w, "  Output: %s\n\n", output)
 
 	if err := downloadFile(w, alpineImageURL, tmpFile); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("download failed: %w", err)
 	}
 
 	// [3/3] Resize image (on temp file).
-	fmt.Fprintf(w, "\n[3/3] Resizing image...\n")
+	fmt.Fprint(w, "\n[3/3] Resizing image...\n")
 
 	fmt.Fprintf(w, "  Resizing to %s...\n", imageSize)
 	if err := resizeImage(tmpFile, imageSize); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return err
 	}
 
 	info, err := os.Stat(tmpFile)
 	if err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("verifying image: %w", err)
 	}
 
 	// Atomic rename from temp to final path.
 	if err := os.Rename(tmpFile, output); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("finalizing image: %w", err)
 	}
 
 	fmt.Fprintf(w, "\nBuild complete: %s (%s)\n", output, formatBytes(info.Size()))
-	fmt.Fprintf(w, "  Base image ready for per-VM guest provisioning at 'vm create' time\n")
+	fmt.Fprint(w, "  Base image ready for per-VM guest provisioning at 'vm create' time\n")
 	return nil
 }
 
@@ -291,11 +319,11 @@ func getBackingFile(diskPath string) string {
 
 // downloadFile fetches a URL and writes it to dst, showing progress on w.
 func downloadFile(w io.Writer, url, dst string) error {
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) //nolint:gosec // URL is from well-known Alpine CDN
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
@@ -305,7 +333,7 @@ func downloadFile(w io.Writer, url, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	pw := &progressWriter{
 		w:     w,
@@ -367,8 +395,9 @@ func (pw *progressWriter) printProgress() {
 	total := pw.total
 	pw.mu.Unlock()
 
+	const percentMultiplier = 100
 	if total > 0 {
-		pct := float64(written) / float64(total) * 100
+		pct := float64(written) / float64(total) * percentMultiplier
 		fmt.Fprintf(pw.w, "\r  Progress: %s / %s (%.0f%%)", formatBytes(written), formatBytes(total), pct)
 	} else {
 		fmt.Fprintf(pw.w, "\r  Progress: %s", formatBytes(written))

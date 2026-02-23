@@ -6,6 +6,12 @@ import (
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
+const (
+	protocolTCP       = "tcp"
+	imageGoshipLatest = "goship-app:latest"
+)
+
+//nolint:cyclop
 func TestParseBytes_MultiService(t *testing.T) {
 	yaml := []byte(`
 version: "3"
@@ -80,7 +86,11 @@ services:
 		t.Errorf("web volumes = %+v", web.Volumes)
 	}
 	if web.RestartPolicy != entities.RestartPolicyAlways {
-		t.Errorf("web restart = %q, want %q (unless-stopped maps to always)", web.RestartPolicy, entities.RestartPolicyAlways)
+		t.Errorf(
+			"web restart = %q, want %q (unless-stopped maps to always)",
+			web.RestartPolicy,
+			entities.RestartPolicyAlways,
+		)
 	}
 	if web.Resources.CPU != 0.5 {
 		t.Errorf("web cpu = %f, want 0.5", web.Resources.CPU)
@@ -223,8 +233,8 @@ services:
 	if ports[0].HostPort != 5432 || ports[0].ContainerPort != 5432 {
 		t.Errorf("port = %d:%d, want 5432:5432", ports[0].HostPort, ports[0].ContainerPort)
 	}
-	if ports[0].Protocol != "tcp" {
-		t.Errorf("protocol = %q, want %q", ports[0].Protocol, "tcp")
+	if ports[0].Protocol != protocolTCP {
+		t.Errorf("protocol = %q, want %q", ports[0].Protocol, protocolTCP)
 	}
 }
 
@@ -292,11 +302,11 @@ services:
 
 func TestParseBytes_ResourceLimits(t *testing.T) {
 	tests := []struct {
-		name     string
-		memory   string
-		wantMB   int64
-		cpus     string
-		wantCPU  float64
+		name    string
+		memory  string
+		wantMB  int64
+		cpus    string
+		wantCPU float64
 	}{
 		{"megabytes", "512m", 512, "1.5", 1.5},
 		{"gigabytes", "2g", 2048, "0.25", 0.25},
@@ -411,8 +421,8 @@ services:
 	if apps[0].Name != "app" {
 		t.Errorf("expected first app to be 'app', got %q", apps[0].Name)
 	}
-	if apps[0].Image != "goship-app:latest" {
-		t.Errorf("app image = %q, want %q", apps[0].Image, "goship-app:latest")
+	if apps[0].Image != imageGoshipLatest {
+		t.Errorf("app image = %q, want %q", apps[0].Image, imageGoshipLatest)
 	}
 
 	// Should have BuildContext for app.
@@ -426,8 +436,8 @@ services:
 	if bc.Dockerfile != "" {
 		t.Errorf("build dockerfile = %q, want empty", bc.Dockerfile)
 	}
-	if bc.ImageName != "goship-app:latest" {
-		t.Errorf("build image name = %q, want %q", bc.ImageName, "goship-app:latest")
+	if bc.ImageName != imageGoshipLatest {
+		t.Errorf("build image name = %q, want %q", bc.ImageName, imageGoshipLatest)
 	}
 
 	// redis should have no build context.
@@ -455,8 +465,8 @@ services:
 	if len(apps) != 1 {
 		t.Fatalf("expected 1 app, got %d", len(apps))
 	}
-	if apps[0].Image != "goship-app:latest" {
-		t.Errorf("app image = %q, want %q", apps[0].Image, "goship-app:latest")
+	if apps[0].Image != imageGoshipLatest {
+		t.Errorf("app image = %q, want %q", apps[0].Image, imageGoshipLatest)
 	}
 
 	bc, ok := builds["app"]

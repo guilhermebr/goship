@@ -17,6 +17,7 @@ const (
 // ProjectState represents the lifecycle state of a project.
 type ProjectState string
 
+// ProjectState constants define the lifecycle states.
 const (
 	ProjectStatePending  ProjectState = "pending"
 	ProjectStateCreating ProjectState = "creating"
@@ -46,7 +47,7 @@ type Project struct {
 	// Runtime type (qemu, kata, firecracker)
 	Runtime RuntimeType `json:"runtime"`
 	// Resource limits for the project VM
-	Resources Resources `json:"resources,omitempty"`
+	Resources Resources `json:"resources"`
 	// Topology defines advanced VM topology (optional, uses defaults if nil)
 	Topology *VMTopology `json:"topology,omitempty"`
 	// Current state

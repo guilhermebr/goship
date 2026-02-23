@@ -1,0 +1,213 @@
+version: "2"
+
+linters:
+  default: all
+  disable:
+    # Import restrictions - needs explicit allow-list per package, too noisy without setup
+    - depguard
+    # Requires ALL struct fields to be initialized - impractical for large structs
+    - exhaustruct
+    # Deprecated in v2, replaced by wsl_v5
+    - wsl
+    # Whitespace style - too opinionated for this project
+    - wsl_v5
+    # Newline before return - pure style noise
+    - nlreturn
+    # No inline error returns - too pedantic
+    - noinlineerr
+    # Tests must use t.Parallel() - noisy for existing tests
+    - paralleltest
+    # No global variables - GoShip uses globals for CLI flags
+    - gochecknoglobals
+    # No init functions - Cobra uses init() for command registration (standard pattern)
+    - gochecknoinits
+    # Wrapping errors from external packages - too strict at this stage
+    - wrapcheck
+    # Must use errors.New/fmt.Errorf with %w - too strict at this stage
+    - err113
+    # Struct tag naming convention (camelCase vs snake_case) - not needed
+    - tagliatelle
+    # Variable name length checks - short names are idiomatic Go
+    - varnamelen
+    # No named returns - named returns are fine when used well
+    - nonamedreturns
+    # Dot at end of comments - too pedantic
+    - godot
+    # TODO/FIXME comments - fine during development
+    - godox
+    # Code duplication - noisy in early development
+    - dupl
+    # Slice preallocation - premature optimization
+    - prealloc
+    # HTTP client must use context - not always relevant
+    - noctx
+    # Performance of fmt.Sprint variants - premature optimization
+    - perfsprint
+    # Interface return checking - interfaces as returns are fine
+    - ireturn
+    # External test packages (_test suffix) - not always needed
+    - testpackage
+    # Interface size limits - ProjectRuntime has 10+ methods by design
+    - interfacebloat
+    # Function ordering in files - too opinionated
+    - funcorder
+    # Blank identifier assignments - occasionally needed
+    - dogsled
+    # Printf-like function naming - too pedantic
+    - goprintffuncname
+    # Forbids fmt.Print* - GoShip is a CLI tool that prints to stdout
+    - forbidigo
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        # Safe to ignore: writing to stdout/stderr/strings.Builder never fails meaningfully
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println
+        - (strings.Builder).WriteString
+        - (strings.Builder).WriteRune
+        - (strings.Builder).WriteByte
+        - (*strings.Builder).WriteString
+        - (*strings.Builder).WriteRune
+        - (*strings.Builder).WriteByte
+    exhaustive:
+      default-signifies-exhaustive: true
+    funlen:
+      lines: 120
+      statements: 40
+    gocognit:
+      min-complexity: 25
+    cyclop:
+      max-complexity: 20
+    gocyclo:
+      min-complexity: 20
+    gosec:
+      excludes:
+        # Subprocess launched with variable - GoShip runs qemu-img, virt-customize, etc.
+        - G204
+        # File/dir from variable path - GoShip works with dynamic VM paths
+        - G304
+        # Unhandled errors - already covered by errcheck
+        - G104
+        # Path traversal via taint - GoShip uses controlled internal paths
+        - G703
+        # XSS via taint - GoShip is a CLI tool, not a web server
+        - G705
+        # Log injection via taint - GoShip logs to local files/stdout only
+        - G706
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    lll:
+      line-length: 120
+      tab-width: 4
+    misspell:
+      locale: US
+    mnd:
+      checks:
+        - case
+        - condition
+        - operation
+    nakedret:
+      max-func-lines: 3
+    revive:
+      enable-all-rules: true
+      rules:
+        - name: add-constant
+          disabled: true
+        - name: argument-limit
+          arguments:
+            - 7
+          severity: warning
+        - name: banned-characters
+          disabled: true
+        - name: cognitive-complexity
+          arguments:
+            - 25
+        - name: comment-spacings
+          arguments:
+            - nolint
+          severity: warning
+        - name: cyclomatic
+          disabled: true
+        - name: file-header
+          disabled: true
+        - name: function-result-limit
+          arguments:
+            - 3
+          severity: warning
+        - name: function-length
+          disabled: true
+        - name: line-length-limit
+          disabled: true
+        - name: max-public-structs
+          disabled: true
+        - name: modifies-value-receiver
+          disabled: true
+        - name: nested-structs
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: package-directory-mismatch
+          disabled: true
+        - name: redundant-import-alias
+          disabled: true
+        - name: unhandled-error
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+        - name: unused-receiver
+          disabled: true
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - lll
+        source: '^//go:generate '
+      - linters:
+          - funlen
+          - maintidx
+          - gocognit
+          - gocyclo
+          - errcheck
+          - errchkjson
+          - goconst
+        path: _test\.go$
+      # File/dir permission lints - GoShip creates VM files with intentional permissions
+      - linters:
+          - gosec
+        text: "G301|G302|G306"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+      custom-order: true
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"
+    golines:
+      max-len: 120

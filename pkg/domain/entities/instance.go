@@ -5,6 +5,7 @@ import "time"
 // InstanceState represents the lifecycle state of a VM instance.
 type InstanceState string
 
+// InstanceState constants define the lifecycle states.
 const (
 	InstanceStatePending  InstanceState = "pending"
 	InstanceStateStarting InstanceState = "starting"

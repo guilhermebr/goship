@@ -55,7 +55,7 @@ type SerialDevice struct {
 // VMTopology defines the complete VM topology configuration.
 type VMTopology struct {
 	// CPU topology
-	CPU CPUTopology `json:"cpu,omitempty"`
+	CPU CPUTopology `json:"cpu"`
 	// Memory backing options
 	MemoryBacking *MemoryBacking `json:"memory_backing,omitempty"`
 	// Disks attached to the VM

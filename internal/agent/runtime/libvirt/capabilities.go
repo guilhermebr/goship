@@ -41,8 +41,8 @@ func DiscoverCapabilities(conn *libvirt.Connect) (*entities.HostCapabilities, er
 
 	// Parse XML
 	var caps libvirtCapabilities
-	if err := xml.Unmarshal([]byte(capsXML), &caps); err != nil {
-		return nil, fmt.Errorf("failed to parse capabilities: %w", err)
+	if parseErr := xml.Unmarshal([]byte(capsXML), &caps); parseErr != nil {
+		return nil, fmt.Errorf("failed to parse capabilities: %w", parseErr)
 	}
 
 	// Check KVM availability
@@ -63,7 +63,18 @@ func DiscoverCapabilities(conn *libvirt.Connect) (*entities.HostCapabilities, er
 	nodeInfo, err := conn.GetNodeInfo()
 	totalMemoryMB := int64(0)
 	if err == nil {
-		totalMemoryMB = int64(nodeInfo.Memory) / 1024 // KB to MB
+		// Check for overflow before conversion (nodeInfo.Memory is in KB, uint64)
+		// Max safe uint64 that fits in int64: 1<<63 - 1 = 9223372036854775807
+		const (
+			maxInt64      = int64(^uint64(0) >> 1)
+			kbToMBDivisor = 1024
+		)
+		memKB := nodeInfo.Memory
+		if memKB > uint64(maxInt64) {
+			totalMemoryMB = maxInt64 / kbToMBDivisor // Cap at max int64, convert to MB
+		} else {
+			totalMemoryMB = int64(memKB) / kbToMBDivisor // KB to MB
+		}
 	}
 
 	// Build CPU topology
@@ -131,8 +142,7 @@ func checkHugepages() (bool, []int64) {
 			sizeStr := strings.TrimPrefix(name, "hugepages-")
 			sizeStr = strings.TrimSuffix(sizeStr, "kB")
 			var size int64
-			_, _ = fmt.Sscanf(sizeStr, "%d", &size)
-			if size > 0 {
+			if n, _ := fmt.Sscanf(sizeStr, "%d", &size); n == 1 && size > 0 {
 				sizes = append(sizes, size)
 			}
 		}

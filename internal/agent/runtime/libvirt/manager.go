@@ -31,10 +31,10 @@ func connectToLibvirt() (*libvirt.Connect, error) {
 	if os.Getuid() != 0 {
 		conn, err = libvirt.NewConnect("qemu:///session")
 		if err == nil {
-			fmt.Fprintf(os.Stderr, "WARNING: Could not connect to qemu:///system (permission denied).\n")
-			fmt.Fprintf(os.Stderr, "  Using qemu:///session instead (per-user, limited features).\n")
-			fmt.Fprintf(os.Stderr, "  To fix: add your user to the 'libvirt' group:\n")
-			fmt.Fprintf(os.Stderr, "    sudo usermod -aG libvirt $USER && newgrp libvirt\n\n")
+			fmt.Fprint(os.Stderr, "WARNING: Could not connect to qemu:///system (permission denied).\n")
+			fmt.Fprint(os.Stderr, "  Using qemu:///session instead (per-user, limited features).\n")
+			fmt.Fprint(os.Stderr, "  To fix: add your user to the 'libvirt' group:\n")
+			fmt.Fprint(os.Stderr, "    sudo usermod -aG libvirt $USER && newgrp libvirt\n\n")
 			return conn, nil
 		}
 	}
@@ -56,7 +56,7 @@ func NewVMManager(dataDir string) (*VMManager, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to libvirt: %w", err)
 	}
-	return &VMManager{conn: conn, dataDir: dataDir}, func() { conn.Close() }, nil
+	return &VMManager{conn: conn, dataDir: dataDir}, func() { _, _ = conn.Close() }, nil
 }
 
 // CreateVMOptions holds the parameters for creating a new VM.
@@ -116,6 +116,8 @@ func diskPath(dataDir, name string) string {
 
 // Create orchestrates full VM creation: verifies the base image, creates the
 // CoW disk, generates domain XML, and defines+starts the VM via libvirt.
+//
+//nolint:funlen,gocognit,gocyclo,cyclop,revive // VM creation requires sequential validation steps
 func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 	// Verify base image exists.
 	if _, err := os.Stat(opts.BaseImage); os.IsNotExist(err) {
@@ -124,7 +126,7 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 
 	// Create VM directory.
 	dir := vmDir(m.dataDir, opts.Name)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create VM directory: %w", err)
 	}
 	if err := sanitizeVMDirACL(dir); err != nil {
@@ -137,7 +139,7 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 	success := false
 	defer func() {
 		if !success {
-			os.RemoveAll(dir)
+			_ = os.RemoveAll(dir)
 		}
 	}()
 
@@ -179,14 +181,14 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 		if hostname == "" {
 			hostname = opts.Name
 		}
-		err := GenerateCloudInitISO(&CloudInitConfig{
+		isoErr := GenerateCloudInitISO(&CloudInitConfig{
 			InstanceID:    uuid,
 			Hostname:      hostname,
 			SSHKey:        opts.SSHKey,
 			InstallDocker: opts.InstallDocker,
 		}, isoPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create cloud-init ISO: %w", err)
+		if isoErr != nil {
+			return nil, fmt.Errorf("failed to create cloud-init ISO: %w", isoErr)
 		}
 		cdroms = append(cdroms, CDROMDevice{Path: isoPath, Format: "raw"})
 	}
@@ -231,8 +233,8 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 
 	// Ensure the libvirt network is active before creating the VM.
 	if opts.NetworkType == "network" && opts.NetworkSource != "" {
-		if err := EnsureNetwork(m.conn, opts.NetworkSource); err != nil {
-			return nil, fmt.Errorf("failed to ensure network: %w", err)
+		if netErr := EnsureNetwork(m.conn, opts.NetworkSource); netErr != nil {
+			return nil, fmt.Errorf("failed to ensure network: %w", netErr)
 		}
 	}
 
@@ -262,6 +264,8 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 }
 
 // Destroy stops a VM, undefines it from libvirt, and optionally removes its disk directory.
+//
+//nolint:revive // keepDisk is a standard destroy option pattern
 func (m *VMManager) Destroy(name string, keepDisk bool) (*DestroyResult, error) {
 	dName := domainName(name)
 
@@ -297,8 +301,8 @@ func (m *VMManager) List() ([]VMInfo, error) {
 	// TODO: collect and surface per-domain errors instead of silently skipping.
 	var vms []VMInfo
 	for _, domain := range domains {
-		name, err := domain.GetName()
-		if err != nil {
+		name, nameErr := domain.GetName()
+		if nameErr != nil {
 			_ = domain.Free()
 			continue
 		}
@@ -308,8 +312,8 @@ func (m *VMManager) List() ([]VMInfo, error) {
 			continue
 		}
 
-		state, _, err := GetVMState(&domain)
-		if err != nil {
+		state, _, stateErr := GetVMState(&domain)
+		if stateErr != nil {
 			_ = domain.Free()
 			continue
 		}
@@ -331,10 +335,16 @@ func GenerateUUID() (string, error) {
 	if _, err := rand.Read(uuid[:]); err != nil {
 		return "", err
 	}
+	const (
+		uuidVersion4    = 0x40 // Version 4 UUID
+		uuidVariant     = 0x80 // RFC 4122 variant
+		uuidVersionMask = 0x0f // Mask for version bits
+		uuidVariantMask = 0x3f // Mask for variant bits
+	)
 	// Set version 4 (bits 12-15 of time_hi_and_version)
-	uuid[6] = (uuid[6] & 0x0f) | 0x40
+	uuid[6] = (uuid[6] & uuidVersionMask) | uuidVersion4
 	// Set variant (bits 6-7 of clock_seq_hi_and_reserved)
-	uuid[8] = (uuid[8] & 0x3f) | 0x80
+	uuid[8] = (uuid[8] & uuidVariantMask) | uuidVariant
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16]), nil
@@ -344,8 +354,8 @@ func GenerateUUID() (string, error) {
 // from libvirt-created sockets. This is best-effort and only runs when setfacl
 // is available on the host.
 func sanitizeVMDirACL(dir string) error {
-	if _, err := exec.LookPath("setfacl"); err != nil {
-		return nil
+	if _, lookErr := exec.LookPath("setfacl"); lookErr != nil {
+		return nil //nolint:nilerr // Best-effort: no error if setfacl not available
 	}
 
 	commands := [][]string{
@@ -354,9 +364,9 @@ func sanitizeVMDirACL(dir string) error {
 	}
 	for _, args := range commands {
 		cmd := exec.Command("setfacl", args...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("setfacl %s failed: %w\n%s", strings.Join(args, " "), err, string(out))
+		out, cmdErr := cmd.CombinedOutput()
+		if cmdErr != nil {
+			return fmt.Errorf("setfacl %s failed: %w\n%s", strings.Join(args, " "), cmdErr, string(out))
 		}
 	}
 

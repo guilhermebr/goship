@@ -107,13 +107,14 @@ func TestCheckExistingVMs_WithBackedVM(t *testing.T) {
 
 	// Create a VM directory with a CoW disk backed by the base image.
 	vmDir := filepath.Join(dir, "vms", "test-vm")
-	if err := os.MkdirAll(vmDir, 0o755); err != nil {
-		t.Fatal(err)
+	if mkdirErr := os.MkdirAll(vmDir, 0o755); mkdirErr != nil {
+		t.Fatal(mkdirErr)
 	}
 
 	diskPath := filepath.Join(vmDir, "disk.qcow2")
 	absBase, _ := filepath.Abs(basePath)
-	out, err = exec.Command("qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", absBase, diskPath).CombinedOutput()
+	out, err = exec.Command("qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", absBase, diskPath).
+		CombinedOutput()
 	if err != nil {
 		t.Fatalf("creating CoW disk: %v\n%s", err, out)
 	}
