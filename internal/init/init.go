@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -29,6 +31,11 @@ const (
 	DefaultInitDir = "/opt/goship"
 	// DefaultBinariesDir is where uploaded app binaries are stored inside the VM.
 	DefaultBinariesDir = "/opt/goship/binaries"
+
+	// Transfer phase constants
+	phaseBegin  = "begin"
+	phaseData   = "data"
+	phaseFinish = "finish"
 )
 
 // updateState tracks an in-progress binary update transfer.
@@ -61,12 +68,12 @@ type imageUploadState struct {
 // Init is the GoShip Init agent orchestrator.
 // It manages the communicator lifecycle, Docker/Process executors, and command handlers.
 type Init struct {
-	comm     *Communicator
-	docker   *DockerManager
-	process  *ProcessManager
-	executor *ExecutorManager
-	ctx      context.Context
-	cancel   context.CancelFunc
+	comm        *Communicator
+	docker      *DockerManager
+	process     *ProcessManager
+	executor    *ExecutorManager
+	ctx         context.Context //nolint:containedctx // context used for init lifecycle
+	cancel      context.CancelFunc
 	initDir     string            // directory where goship-init binary lives
 	update      *updateState      // in-progress update transfer (nil when idle)
 	upload      *uploadState      // in-progress binary upload transfer (nil when idle)
@@ -257,7 +264,7 @@ func readLastNLines(path string, n int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	// Use a ring buffer to keep only the last n lines.
@@ -274,14 +281,14 @@ func readLastNLines(path string, n int) (string, error) {
 		return "", err
 	}
 
-	result := ""
+	var result strings.Builder
 	for i, line := range ring {
 		if i > 0 {
-			result += "\n"
+			result.WriteString("\n")
 		}
-		result += line
+		result.WriteString(line)
 	}
-	return result, nil
+	return result.String(), nil
 }
 
 func (i *Init) handleStatus(_ *v1.InitCommand) *v1.InitResponse {
@@ -291,6 +298,7 @@ func (i *Init) handleStatus(_ *v1.InitCommand) *v1.InitResponse {
 	}
 
 	// Build backwards-compatible Containers list from container-mode apps.
+	//nolint:staticcheck // Maintaining backwards compatibility during transition to AppStatus
 	var containers []v1.ContainerStatus
 	for _, app := range apps {
 		if app.ExecutionMode == entities.ExecutionModeContainer || app.ExecutionMode == "" {
@@ -308,11 +316,16 @@ func (i *Init) handleStatus(_ *v1.InitCommand) *v1.InitResponse {
 
 // getVMInfo returns information about the VM.
 func (i *Init) getVMInfo() *v1.VMInfo {
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = ""
+	}
 
 	var dockerVersion string
 	if i.docker != nil {
-		dockerVersion, _ = i.docker.GetDockerVersion(i.ctx)
+		if ver, err := i.docker.GetDockerVersion(i.ctx); err == nil {
+			dockerVersion = ver
+		}
 	}
 
 	return &v1.VMInfo{
@@ -363,16 +376,24 @@ func getUptime() int64 {
 }
 
 // waitForDocker waits for the Docker daemon to become available.
+// If Docker doesn't respond within the initial wait period, it attempts to
+// recover by zapping stale OpenRC state and restarting the service. This
+// handles the case where Docker's init script gets stuck in "starting" state
+// after an unclean VM shutdown (e.g., ACPI poweroff with running containers).
 func waitForDocker(ctx context.Context, timeout time.Duration) (*DockerManager, error) {
 	deadline := time.Now().Add(timeout)
 
-	for time.Now().Before(deadline) {
+	// First pass: wait for Docker to come up normally.
+	initialWait := min(timeout, 30*time.Second)
+	initialDeadline := time.Now().Add(initialWait)
+
+	for time.Now().Before(initialDeadline) {
 		docker, err := NewDockerManager()
 		if err == nil {
 			if _, err = docker.GetDockerVersion(ctx); err == nil {
 				return docker, nil
 			}
-			docker.Close()
+			_ = docker.Close()
 		}
 
 		select {
@@ -381,16 +402,53 @@ func waitForDocker(ctx context.Context, timeout time.Duration) (*DockerManager, 
 		case <-time.After(time.Second):
 		}
 	}
-	return nil, fmt.Errorf("timeout waiting for Docker daemon")
+
+	// Docker didn't start normally. Try to recover by zapping stale state
+	// and restarting the service (handles "already starting" stuck state).
+	log.Printf("goship-init: Docker not responding after %s, attempting service recovery", initialWait)
+	restartDockerService()
+
+	// Second pass: wait for Docker after recovery attempt.
+	for time.Now().Before(deadline) {
+		docker, err := NewDockerManager()
+		if err == nil {
+			if _, err = docker.GetDockerVersion(ctx); err == nil {
+				log.Print("goship-init: Docker recovered after service restart")
+				return docker, nil
+			}
+			_ = docker.Close()
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return nil, errors.New("timeout waiting for Docker daemon")
+}
+
+// restartDockerService attempts to recover a stuck Docker service by zapping
+// stale OpenRC state and restarting it. This is a best-effort operation.
+func restartDockerService() {
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("goship-init: %s %v failed: %v (%s)", name, args, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	run("rc-service", "docker", "zap")
+	run("rc-service", "docker", "start")
 }
 
 func (i *Init) handleUpdateInit(cmd *v1.InitCommand) *v1.InitResponse {
 	switch cmd.Phase {
-	case "begin":
+	case phaseBegin:
 		return i.handleUpdateBegin(cmd)
-	case "data":
+	case phaseData:
 		return i.handleUpdateData(cmd)
-	case "finish":
+	case phaseFinish:
 		return i.handleUpdateFinish(cmd)
 	default:
 		return &v1.InitResponse{
@@ -412,7 +470,7 @@ func (i *Init) handleUpdateBegin(cmd *v1.InitCommand) *v1.InitResponse {
 	i.cleanupUpdate()
 
 	// Ensure init directory exists.
-	if err := os.MkdirAll(i.initDir, 0755); err != nil {
+	if err := os.MkdirAll(i.initDir, 0o755); err != nil {
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to create init dir: %v", err),
@@ -420,7 +478,7 @@ func (i *Init) handleUpdateBegin(cmd *v1.InitCommand) *v1.InitResponse {
 	}
 
 	tmpPath := filepath.Join(i.initDir, "goship-init.new")
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return &v1.InitResponse{
 			Status: v1.StatusError,
@@ -479,7 +537,7 @@ func (i *Init) handleUpdateFinish(_ *v1.InitCommand) *v1.InitResponse {
 	expectedChecksum := i.update.checksum
 	if err := i.update.tmpFile.Close(); err != nil {
 		i.update = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to close temp file: %v", err),
@@ -490,7 +548,7 @@ func (i *Init) handleUpdateFinish(_ *v1.InitCommand) *v1.InitResponse {
 	actualChecksum, err := fileSHA256(tmpPath)
 	if err != nil {
 		i.update = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to compute checksum: %v", err),
@@ -499,7 +557,7 @@ func (i *Init) handleUpdateFinish(_ *v1.InitCommand) *v1.InitResponse {
 
 	if actualChecksum != expectedChecksum {
 		i.update = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum),
@@ -511,12 +569,12 @@ func (i *Init) handleUpdateFinish(_ *v1.InitCommand) *v1.InitResponse {
 	oldPath := filepath.Join(i.initDir, "goship-init.old")
 
 	// Remove any previous .old backup.
-	os.Remove(oldPath)
+	_ = os.Remove(oldPath)
 
 	// Rename current binary to .old (may not exist on first install).
 	if err := os.Rename(currentPath, oldPath); err != nil && !os.IsNotExist(err) {
 		i.update = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to backup current binary: %v", err),
@@ -534,7 +592,7 @@ func (i *Init) handleUpdateFinish(_ *v1.InitCommand) *v1.InitResponse {
 		}
 	}
 
-	if err := os.Chmod(currentPath, 0755); err != nil {
+	if err := os.Chmod(currentPath, 0o755); err != nil {
 		log.Printf("goship-init: warning: chmod failed: %v", err)
 	}
 
@@ -549,18 +607,18 @@ func (i *Init) cleanupUpdate() {
 		return
 	}
 	tmpPath := i.update.tmpFile.Name()
-	i.update.tmpFile.Close()
-	os.Remove(tmpPath)
+	_ = i.update.tmpFile.Close()
+	_ = os.Remove(tmpPath)
 	i.update = nil
 }
 
 func (i *Init) handleUploadBinary(cmd *v1.InitCommand) *v1.InitResponse {
 	switch cmd.Phase {
-	case "begin":
+	case phaseBegin:
 		return i.handleUploadBegin(cmd)
-	case "data":
+	case phaseData:
 		return i.handleUploadData(cmd)
-	case "finish":
+	case phaseFinish:
 		return i.handleUploadFinish(cmd)
 	default:
 		return &v1.InitResponse{
@@ -601,7 +659,7 @@ func (i *Init) handleUploadBegin(cmd *v1.InitCommand) *v1.InitResponse {
 
 	// Create destination directory.
 	destDir := filepath.Join(DefaultBinariesDir, appName)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to create directory %s: %v", destDir, err),
@@ -609,7 +667,7 @@ func (i *Init) handleUploadBegin(cmd *v1.InitCommand) *v1.InitResponse {
 	}
 
 	tmpPath := filepath.Join(destDir, fileName+".new")
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return &v1.InitResponse{
 			Status: v1.StatusError,
@@ -671,7 +729,7 @@ func (i *Init) handleUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 
 	if err := i.upload.tmpFile.Close(); err != nil {
 		i.upload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to close temp file: %v", err),
@@ -682,7 +740,7 @@ func (i *Init) handleUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 	actualChecksum, err := fileSHA256(tmpPath)
 	if err != nil {
 		i.upload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to compute checksum: %v", err),
@@ -691,7 +749,7 @@ func (i *Init) handleUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 
 	if actualChecksum != expectedChecksum {
 		i.upload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum),
@@ -701,14 +759,14 @@ func (i *Init) handleUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 	// Rename .new to final destination.
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		i.upload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to install binary: %v", err),
 		}
 	}
 
-	if err := os.Chmod(destPath, 0755); err != nil {
+	if err := os.Chmod(destPath, 0o755); err != nil {
 		log.Printf("goship-init: warning: chmod failed: %v", err)
 	}
 
@@ -723,18 +781,18 @@ func (i *Init) cleanupUpload() {
 		return
 	}
 	tmpPath := i.upload.tmpFile.Name()
-	i.upload.tmpFile.Close()
-	os.Remove(tmpPath)
+	_ = i.upload.tmpFile.Close()
+	_ = os.Remove(tmpPath)
 	i.upload = nil
 }
 
 func (i *Init) handleUploadImage(cmd *v1.InitCommand) *v1.InitResponse {
 	switch cmd.Phase {
-	case "begin":
+	case phaseBegin:
 		return i.handleImageUploadBegin(cmd)
-	case "data":
+	case phaseData:
 		return i.handleImageUploadData(cmd)
-	case "finish":
+	case phaseFinish:
 		return i.handleImageUploadFinish(cmd)
 	default:
 		return &v1.InitResponse{
@@ -759,7 +817,7 @@ func (i *Init) handleImageUploadBegin(cmd *v1.InitCommand) *v1.InitResponse {
 	i.cleanupImageUpload()
 
 	tmpPath := "/tmp/goship-image-upload.tar.gz"
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return &v1.InitResponse{
 			Status: v1.StatusError,
@@ -819,7 +877,7 @@ func (i *Init) handleImageUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 
 	if err := i.imageUpload.tmpFile.Close(); err != nil {
 		i.imageUpload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to close temp file: %v", err),
@@ -830,7 +888,7 @@ func (i *Init) handleImageUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 	actualChecksum, err := fileSHA256(tmpPath)
 	if err != nil {
 		i.imageUpload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to compute checksum: %v", err),
@@ -839,7 +897,7 @@ func (i *Init) handleImageUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 
 	if actualChecksum != expectedChecksum {
 		i.imageUpload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum),
@@ -849,7 +907,7 @@ func (i *Init) handleImageUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 	// Load image into Docker.
 	if i.docker == nil {
 		i.imageUpload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  "Docker is not available to load image",
@@ -859,24 +917,24 @@ func (i *Init) handleImageUploadFinish(_ *v1.InitCommand) *v1.InitResponse {
 	imgFile, err := os.Open(tmpPath)
 	if err != nil {
 		i.imageUpload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to open image file: %v", err),
 		}
 	}
-	defer imgFile.Close()
+	defer func() { _ = imgFile.Close() }()
 
 	if err := i.docker.LoadImage(i.ctx, imgFile); err != nil {
 		i.imageUpload = nil
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return &v1.InitResponse{
 			Status: v1.StatusError,
 			Error:  fmt.Sprintf("failed to load image: %v", err),
 		}
 	}
 
-	os.Remove(tmpPath)
+	_ = os.Remove(tmpPath)
 	imageRef := i.imageUpload.imageRef
 	i.imageUpload = nil
 	log.Printf("goship-init: upload-image complete, image %s loaded", imageRef)
@@ -889,8 +947,8 @@ func (i *Init) cleanupImageUpload() {
 		return
 	}
 	tmpPath := i.imageUpload.tmpFile.Name()
-	i.imageUpload.tmpFile.Close()
-	os.Remove(tmpPath)
+	_ = i.imageUpload.tmpFile.Close()
+	_ = os.Remove(tmpPath)
 	i.imageUpload = nil
 }
 
@@ -900,7 +958,7 @@ func fileSHA256(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {

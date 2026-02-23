@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/guilhermebr/goship/internal/shared/state"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -137,7 +139,10 @@ func TestProjectInfo_WithApps(t *testing.T) {
 
 	project, _ := store.CreateProject("app-proj", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
 	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx:alpine"})
-	_ = store.SetApp(project.ID, &entities.AppSpec{Name: "worker", ExecutionMode: entities.ExecutionModeProcess, Binary: "/usr/bin/worker"})
+	_ = store.SetApp(
+		project.ID,
+		&entities.AppSpec{Name: "worker", ExecutionMode: entities.ExecutionModeProcess, Binary: "/usr/bin/worker"},
+	)
 
 	buf := new(bytes.Buffer)
 	projectInfoCmd.SetOut(buf)
@@ -155,5 +160,139 @@ func TestProjectInfo_WithApps(t *testing.T) {
 	}
 	if !strings.Contains(output, "worker (binary: /usr/bin/worker)") {
 		t.Errorf("expected process app in output, got:\n%s", output)
+	}
+}
+
+func TestProjectEdit_NoArgs(t *testing.T) {
+	err := projectEditCmd.Args(projectEditCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for missing args")
+	}
+}
+
+func TestProjectEdit_NotFound(t *testing.T) {
+	setupTestState(t)
+
+	err := runProjectEdit(projectEditCmd, []string{"ghost"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent project")
+	}
+	if !strings.Contains(err.Error(), "project not found") {
+		t.Errorf("expected 'project not found', got: %v", err)
+	}
+}
+
+func TestProjectEdit_NoInstance(t *testing.T) {
+	setupTestState(t)
+
+	_, _ = store.CreateProject("no-inst", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+
+	err := runProjectEdit(projectEditCmd, []string{"no-inst"})
+	if err == nil {
+		t.Fatal("expected error for missing instance")
+	}
+	if !strings.Contains(err.Error(), "no VM instance found") {
+		t.Errorf("expected 'no VM instance found', got: %v", err)
+	}
+}
+
+func TestProjectEdit_VMNotStopped(t *testing.T) {
+	setupTestState(t)
+
+	project, _ := store.CreateProject("running-proj", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	_ = store.SetInstance(&entities.ProjectInstance{
+		ID:         "inst-running",
+		ProjectID:  project.ID,
+		State:      entities.InstanceStateRunning,
+		DomainName: "goship-running-proj",
+	})
+
+	// Set a flag so the Changed check passes.
+	projectEditCmd.Flags().Set("cpu", "2")
+	defer projectEditCmd.Flags().Set("cpu", "0")
+
+	err := runProjectEdit(projectEditCmd, []string{"running-proj"})
+	if err == nil {
+		t.Fatal("expected error for running VM")
+	}
+	if !strings.Contains(err.Error(), "VM must be stopped") {
+		t.Errorf("expected 'VM must be stopped', got: %v", err)
+	}
+}
+
+func TestProjectEdit_NoChanges(t *testing.T) {
+	setupTestState(t)
+
+	project, _ := store.CreateProject(
+		"no-change",
+		entities.RuntimeQEMU,
+		entities.Resources{CPU: 1, MemoryMB: 512, DiskMB: 4096},
+	)
+	_ = store.SetInstance(&entities.ProjectInstance{
+		ID:         "inst-stopped",
+		ProjectID:  project.ID,
+		State:      entities.InstanceStateStopped,
+		DomainName: "goship-no-change",
+	})
+
+	// Create a fresh command to avoid leftover flag state.
+	cmd := &cobra.Command{Use: "edit", Args: cobra.ExactArgs(1), RunE: runProjectEdit}
+	cmd.Flags().Float64Var(&projectEditCPU, "cpu", 0, "Number of CPU cores")
+	cmd.Flags().StringVar(&projectEditMemory, "memory", "", "Memory (e.g., 512M, 8G)")
+	cmd.Flags().StringVar(&projectEditDisk, "disk", "", "Disk size (e.g., 4G, 8192M)")
+
+	err := runProjectEdit(cmd, []string{"no-change"})
+	if err == nil {
+		t.Fatal("expected error for no changes")
+	}
+	if !strings.Contains(err.Error(), "no changes specified") {
+		t.Errorf("expected 'no changes specified', got: %v", err)
+	}
+}
+
+func TestProjectEdit_DiskShrinkRejected(t *testing.T) {
+	setupTestState(t)
+
+	project, _ := store.CreateProject(
+		"shrink-proj",
+		entities.RuntimeQEMU,
+		entities.Resources{CPU: 1, MemoryMB: 512, DiskMB: 8192},
+	)
+	_ = store.SetInstance(&entities.ProjectInstance{
+		ID:         "inst-shrink",
+		ProjectID:  project.ID,
+		State:      entities.InstanceStateStopped,
+		DomainName: "goship-shrink-proj",
+	})
+
+	cmd := &cobra.Command{Use: "edit", Args: cobra.ExactArgs(1), RunE: runProjectEdit}
+	cmd.Flags().Float64Var(&projectEditCPU, "cpu", 0, "Number of CPU cores")
+	cmd.Flags().StringVar(&projectEditMemory, "memory", "", "Memory (e.g., 512M, 8G)")
+	cmd.Flags().StringVar(&projectEditDisk, "disk", "", "Disk size (e.g., 4G, 8192M)")
+	cmd.Flags().Set("disk", "4096M")
+
+	err := runProjectEdit(cmd, []string{"shrink-proj"})
+	if err == nil {
+		t.Fatal("expected error for disk shrink")
+	}
+	if !strings.Contains(err.Error(), "disk size can only grow") {
+		t.Errorf("expected 'disk size can only grow', got: %v", err)
+	}
+}
+
+func TestProjectEdit_FlagsRegistered(t *testing.T) {
+	cpuFlag := projectEditCmd.Flags().Lookup("cpu")
+	if cpuFlag == nil {
+		t.Error("expected --cpu flag to be registered")
+	}
+
+	memFlag := projectEditCmd.Flags().Lookup("memory")
+	if memFlag == nil {
+		t.Error("expected --memory flag to be registered")
+	}
+
+	diskFlag := projectEditCmd.Flags().Lookup("disk")
+	if diskFlag == nil {
+		t.Error("expected --disk flag to be registered")
 	}
 }

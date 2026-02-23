@@ -3,9 +3,11 @@ package libvirt
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -57,7 +59,7 @@ func New(opts ...runtime.RuntimeOption) (*Runtime, error) {
 		config.InitBinaryPath = expandPath(config.InitBinaryPath)
 	}
 
-	if err := os.MkdirAll(config.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(config.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
@@ -76,14 +78,14 @@ func New(opts ...runtime.RuntimeOption) (*Runtime, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.ConnectionTimeout)
 	defer cancel()
 	if err := r.RefreshCapabilities(ctx); err != nil {
-		conn.Close()
+		_, _ = conn.Close()
 		return nil, fmt.Errorf("failed to discover capabilities: %w", err)
 	}
 
 	if !r.capabilities.KVMAvailable {
-		fmt.Fprintf(os.Stderr, "Warning: KVM not available, using QEMU TCG (software emulation)\n")
-		fmt.Fprintf(os.Stderr, "  CPU mode: host-model (host-passthrough requires KVM)\n")
-		fmt.Fprintf(os.Stderr, "  Performance will be significantly degraded\n")
+		fmt.Fprint(os.Stderr, "Warning: KVM not available, using QEMU TCG (software emulation)\n")
+		fmt.Fprint(os.Stderr, "  CPU mode: host-model (host-passthrough requires KVM)\n")
+		fmt.Fprint(os.Stderr, "  Performance will be significantly degraded\n")
 		config.EnableKVM = false
 	}
 
@@ -100,7 +102,7 @@ func (r *Runtime) getConnection() (*libvirt.Connect, error) {
 		if err == nil && alive {
 			return r.conn, nil
 		}
-		r.conn.Close()
+		_, _ = r.conn.Close()
 	}
 
 	conn, err := libvirt.NewConnect(r.config.LibvirtURI)
@@ -227,6 +229,8 @@ func (r *Runtime) LoadInstance(instance *entities.ProjectInstance) {
 
 // waitReady polls the VM until it boots and the goship-init agent responds.
 // It sends a ping first, then streams cloud-init logs while waiting for status.
+//
+//nolint:funlen,gocognit,gocyclo,cyclop,revive // VM boot polling requires multiple sequential checks
 func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
@@ -254,7 +258,7 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for VM to become ready")
+			return errors.New("timed out waiting for VM to become ready")
 		case <-ticker.C:
 		}
 
@@ -285,8 +289,8 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 		}
 
 		// Send ping first (fast healthcheck).
-		if err := comm.Ping(ctx); err != nil {
-			comm.Close()
+		if pingErr := comm.Ping(ctx); pingErr != nil {
+			_ = comm.Close()
 			continue
 		}
 
@@ -303,8 +307,8 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 		if err == nil && logResp.Status == v1.StatusOK && len(logResp.Logs) > logOffset {
 			newContent := logResp.Logs[logOffset:]
 			// Print each new line with a prefix.
-			lines := strings.Split(newContent, "\n")
-			for _, line := range lines {
+			lines := strings.SplitSeq(newContent, "\n")
+			for line := range lines {
 				if line != "" {
 					progress("  %s", line)
 				}
@@ -314,7 +318,7 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 
 		// Send status to get VM info (IP, hostname).
 		resp, err := comm.SendCommand(ctx, &v1.InitCommand{Action: v1.ActionStatus})
-		comm.Close()
+		_ = comm.Close()
 		if err != nil {
 			continue
 		}
@@ -432,7 +436,7 @@ func (r *Runtime) DeployApp(ctx context.Context, instanceID string, app *entitie
 	if err != nil {
 		return fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
 		Action: v1.ActionDeploy,
@@ -460,7 +464,7 @@ func (r *Runtime) StopApp(ctx context.Context, instanceID string, appName string
 	if err != nil {
 		return fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
 		Action:  v1.ActionStop,
@@ -488,7 +492,7 @@ func (r *Runtime) RemoveApp(ctx context.Context, instanceID string, appName stri
 	if err != nil {
 		return fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
 		Action:  v1.ActionRemove,
@@ -516,10 +520,10 @@ func (r *Runtime) GetInstanceStatus(ctx context.Context, instanceID string) (*en
 	// Try to refresh state from libvirt.
 	conn, err := r.getConnection()
 	if err == nil {
-		domain, err := conn.LookupDomainByName(info.instance.DomainName)
-		if err == nil {
-			state, _, err := domain.GetState()
-			if err == nil {
+		domain, domainErr := conn.LookupDomainByName(info.instance.DomainName)
+		if domainErr == nil {
+			state, _, stateErr := domain.GetState()
+			if stateErr == nil {
 				info.instance.State = mapLibvirtState(state)
 			}
 			_ = domain.Free()
@@ -545,7 +549,15 @@ func (r *Runtime) ListInstances(ctx context.Context) ([]*entities.ProjectInstanc
 const uploadChunkSize = 512 * 1024 // 512KB
 
 // UploadBinary uploads a binary file into the VM for a specific app via virtio-serial.
-func (r *Runtime) UploadBinary(ctx context.Context, instanceID string, appName string, fileName string, reader io.Reader, size int64, checksum string) error {
+func (r *Runtime) UploadBinary(
+	ctx context.Context,
+	instanceID string,
+	appName string,
+	fileName string,
+	reader io.Reader,
+	size int64,
+	checksum string,
+) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
 	r.mu.RUnlock()
@@ -557,7 +569,7 @@ func (r *Runtime) UploadBinary(ctx context.Context, instanceID string, appName s
 	if err != nil {
 		return fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	// Phase: begin
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
@@ -581,16 +593,16 @@ func (r *Runtime) UploadBinary(ctx context.Context, instanceID string, appName s
 		n, readErr := reader.Read(buf)
 		if n > 0 {
 			encoded := base64.StdEncoding.EncodeToString(buf[:n])
-			resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+			dataResp, sendErr := comm.SendCommand(ctx, &v1.InitCommand{
 				Action: v1.ActionUploadBinary,
 				Phase:  "data",
 				Data:   encoded,
 			})
-			if err != nil {
-				return fmt.Errorf("upload data failed: %w", err)
+			if sendErr != nil {
+				return fmt.Errorf("upload data failed: %w", sendErr)
 			}
-			if resp.Status != v1.StatusOK {
-				return fmt.Errorf("upload data error: %s", resp.Error)
+			if dataResp.Status != v1.StatusOK {
+				return fmt.Errorf("upload data error: %s", dataResp.Error)
 			}
 		}
 		if readErr == io.EOF {
@@ -617,7 +629,14 @@ func (r *Runtime) UploadBinary(ctx context.Context, instanceID string, appName s
 }
 
 // UploadImage uploads a Docker image tarball into the VM via virtio-serial.
-func (r *Runtime) UploadImage(ctx context.Context, instanceID string, imageRef string, reader io.Reader, size int64, checksum string) error {
+func (r *Runtime) UploadImage(
+	ctx context.Context,
+	instanceID string,
+	imageRef string,
+	reader io.Reader,
+	size int64,
+	checksum string,
+) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
 	r.mu.RUnlock()
@@ -629,7 +648,7 @@ func (r *Runtime) UploadImage(ctx context.Context, instanceID string, imageRef s
 	if err != nil {
 		return fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	// Phase: begin
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
@@ -652,16 +671,16 @@ func (r *Runtime) UploadImage(ctx context.Context, instanceID string, imageRef s
 		n, readErr := reader.Read(buf)
 		if n > 0 {
 			encoded := base64.StdEncoding.EncodeToString(buf[:n])
-			resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+			dataResp, sendErr := comm.SendCommand(ctx, &v1.InitCommand{
 				Action: v1.ActionUploadImage,
 				Phase:  "data",
 				Data:   encoded,
 			})
-			if err != nil {
-				return fmt.Errorf("image upload data failed: %w", err)
+			if sendErr != nil {
+				return fmt.Errorf("image upload data failed: %w", sendErr)
 			}
-			if resp.Status != v1.StatusOK {
-				return fmt.Errorf("image upload data error: %s", resp.Error)
+			if dataResp.Status != v1.StatusOK {
+				return fmt.Errorf("image upload data error: %s", dataResp.Error)
 			}
 		}
 		if readErr == io.EOF {
@@ -700,7 +719,7 @@ func (r *Runtime) GetAppLogs(ctx context.Context, instanceID string, appName str
 	if err != nil {
 		return "", fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	logFile := fmt.Sprintf("/var/log/goship-%s.log", appName)
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
@@ -719,13 +738,145 @@ func (r *Runtime) GetAppLogs(ctx context.Context, instanceID string, appName str
 }
 
 // StreamLogs streams logs from an application inside a VM instance.
-func (r *Runtime) StreamLogs(ctx context.Context, instanceID string, appName string, follow bool) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("log streaming not implemented")
+func (r *Runtime) StreamLogs(
+	ctx context.Context,
+	instanceID string,
+	appName string,
+	follow bool,
+) (io.ReadCloser, error) {
+	return nil, errors.New("log streaming not implemented")
 }
 
 // ExecCommand executes a command inside a VM instance.
-func (r *Runtime) ExecCommand(ctx context.Context, instanceID string, appName string, cmd []string) (stdout, stderr string, exitCode int, err error) {
-	return "", "", -1, fmt.Errorf("exec not implemented")
+//
+//nolint:revive // Four return values required by interface
+func (r *Runtime) ExecCommand(
+	ctx context.Context,
+	instanceID string,
+	appName string,
+	cmd []string,
+) (stdout, stderr string, exitCode int, err error) {
+	return "", "", -1, errors.New("exec not implemented")
+}
+
+// ResizeInstance updates the VM definition with new resource values from the project.
+// The VM must be stopped (shut off) before calling this method.
+//
+//nolint:funlen // VM resize requires regenerating complete domain XML
+func (r *Runtime) ResizeInstance(ctx context.Context, instanceID string, project *entities.Project) error {
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	// Verify the domain is shut off.
+	conn, err := r.getConnection()
+	if err != nil {
+		return fmt.Errorf("failed to get libvirt connection: %w", err)
+	}
+
+	domain, err := conn.LookupDomainByName(info.instance.DomainName)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+	defer func() { _ = domain.Free() }()
+
+	state, _, err := domain.GetState()
+	if err != nil {
+		return fmt.Errorf("failed to get domain state: %w", err)
+	}
+	if state != libvirt.DOMAIN_SHUTOFF {
+		return fmt.Errorf("VM must be stopped before resizing (current state: %s)", FormatVMState(state))
+	}
+
+	// Resolve resource values (same defaults logic as CreateInstance).
+	cpus := r.config.DefaultCPU
+	if project.Resources.CPU > 0 {
+		cpus = int(project.Resources.CPU)
+	}
+	memoryMB := r.config.DefaultMemoryMB
+	if project.Resources.MemoryMB > 0 {
+		memoryMB = project.Resources.MemoryMB
+	}
+	diskMB := r.config.DefaultDiskMB
+	if project.Resources.DiskMB > 0 {
+		diskMB = project.Resources.DiskMB
+	}
+
+	// Derive paths from the domain name.
+	vmName := strings.TrimPrefix(info.instance.DomainName, DomainPrefix)
+	disk := diskPath(r.config.DataDir, vmName)
+	dir := vmDir(r.config.DataDir, vmName)
+	socketPath := filepath.Join(dir, "goship.sock")
+
+	// Build the cloud-init CDROMs list (preserve existing cloud-init ISO if present).
+	var cdroms []CDROMDevice
+	isoPath := filepath.Join(dir, "cloud-init.iso")
+	if _, statErr := os.Stat(isoPath); statErr == nil {
+		cdroms = append(cdroms, CDROMDevice{Path: isoPath, Format: "raw"})
+	}
+
+	// Regenerate domain XML with updated resources.
+	config := &DomainConfig{
+		Name:         info.instance.DomainName,
+		UUID:         info.instance.DomainUUID,
+		MemoryMB:     memoryMB,
+		EnableKVM:    r.config.EnableKVM,
+		SecurityNone: true,
+		DACLabel:     fmt.Sprintf("+%d:+%d", os.Getuid(), os.Getgid()),
+		CPU: entities.CPUTopology{
+			Sockets: 1,
+			Cores:   cpus,
+			Threads: 1,
+		},
+		Disks: []entities.DiskDevice{
+			{
+				Path:   disk,
+				Format: "qcow2",
+				Bus:    "virtio",
+			},
+		},
+		CDROMs: cdroms,
+		Networks: []entities.NetworkDevice{
+			{
+				Type:   r.config.NetworkType,
+				Source: r.config.NetworkSource,
+				Model:  "virtio",
+			},
+		},
+		Serials: []entities.SerialDevice{
+			{
+				Type:       "virtio-serial",
+				SocketPath: socketPath,
+				PortName:   "goship.0",
+			},
+		},
+	}
+
+	domainXML, err := GenerateDomainXML(config)
+	if err != nil {
+		return fmt.Errorf("failed to generate domain XML: %w", err)
+	}
+
+	// Redefine the domain with updated XML.
+	newDomain, err := conn.DomainDefineXML(domainXML)
+	if err != nil {
+		return fmt.Errorf("failed to redefine domain: %w", err)
+	}
+	_ = newDomain.Free()
+
+	// Resize disk if it grew.
+	if diskMB > 0 {
+		size := fmt.Sprintf("%dM", diskMB)
+		cmd := exec.Command("qemu-img", "resize", disk, size)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to resize disk to %s: %w\n%s", size, err, string(out))
+		}
+	}
+
+	return nil
 }
 
 // GetHostCapabilities returns host capabilities.
@@ -734,7 +885,7 @@ func (r *Runtime) GetHostCapabilities(ctx context.Context) (*entities.HostCapabi
 	defer r.mu.RUnlock()
 
 	if r.capabilities == nil {
-		return nil, fmt.Errorf("capabilities not yet discovered")
+		return nil, errors.New("capabilities not yet discovered")
 	}
 	return r.capabilities, nil
 }

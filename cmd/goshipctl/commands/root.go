@@ -58,9 +58,12 @@ func Execute() error {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "~/.goship", "Data directory for GoShip")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", true, "Enable verbose output")
-	rootCmd.PersistentFlags().StringVar(&initBinaryPath, "goship-init", "~/.goship/bin/goship-init", "Path to goship-init binary")
-	rootCmd.PersistentFlags().BoolVar(&skipGuestProvision, "skip-guest-provision", false, "Skip guest disk provisioning")
-	rootCmd.PersistentFlags().BoolVar(&installDocker, "install-docker", true, "Install Docker during guest provisioning")
+	rootCmd.PersistentFlags().
+		StringVar(&initBinaryPath, "goship-init", "~/.goship/bin/goship-init", "Path to goship-init binary")
+	rootCmd.PersistentFlags().
+		BoolVar(&skipGuestProvision, "skip-guest-provision", false, "Skip guest disk provisioning")
+	rootCmd.PersistentFlags().
+		BoolVar(&installDocker, "install-docker", true, "Install Docker during guest provisioning")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
@@ -100,7 +103,7 @@ func needsRuntime(cmd *cobra.Command) bool {
 	// Project subcommands that need the runtime for VM operations.
 	if parent == "project" {
 		switch name {
-		case "create", "delete", "stop", "start", "restart", "update-init":
+		case "create", "delete", "edit", "stop", "start", "restart", "update-init":
 			return true
 		}
 	}

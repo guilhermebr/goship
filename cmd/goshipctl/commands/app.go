@@ -4,8 +4,10 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	"github.com/guilhermebr/goship/internal/shared/size"
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -36,7 +39,7 @@ var (
 	appReplicas      int
 	appEnv           []string
 	appCPU           float64
-	appMemory        int64
+	appMemory        string
 	appDescription   string
 	appTags          []string
 	appRestartPolicy string
@@ -52,7 +55,7 @@ var (
 	appEditTags          []string
 	appEditRestartPolicy string
 	appEditCPU           float64
-	appEditMemory        int64
+	appEditMemory        string
 )
 
 // Flags for app deploy.
@@ -140,23 +143,26 @@ func init() {
 	appCreateCmd.Flags().IntVarP(&appReplicas, "replicas", "r", 1, "Number of replicas")
 	appCreateCmd.Flags().StringArrayVarP(&appEnv, "env", "e", nil, "Environment variable KEY=VALUE (repeatable)")
 	appCreateCmd.Flags().Float64Var(&appCPU, "cpu", 0, "CPU limit (cores)")
-	appCreateCmd.Flags().Int64Var(&appMemory, "memory", 0, "Memory limit in MB")
+	appCreateCmd.Flags().StringVar(&appMemory, "memory", "", "Memory limit (e.g., 512M, 2G)")
 	appCreateCmd.Flags().StringVarP(&appDescription, "description", "d", "", "App description")
 	appCreateCmd.Flags().StringArrayVarP(&appTags, "tag", "g", nil, "Tags (repeatable)")
-	appCreateCmd.Flags().StringVar(&appRestartPolicy, "restart-policy", "never", "Restart policy: never, always, or on-failure")
+	appCreateCmd.Flags().
+		StringVar(&appRestartPolicy, "restart-policy", "never", "Restart policy: never, always, or on-failure")
 
 	appDeployCmd.Flags().StringVarP(&appImage, "image", "i", "", "Container image (overrides app spec)")
 	appDeployCmd.Flags().BoolVar(&appLocalImage, "local-image", false, "Push local Docker image to VM before deploying")
 
 	appEditCmd.Flags().StringVarP(&appEditImage, "image", "i", "", "Container image")
 	appEditCmd.Flags().StringVarP(&appEditBinary, "binary", "b", "", "Binary path (process mode)")
-	appEditCmd.Flags().StringArrayVarP(&appEditPorts, "port", "p", nil, "Port mapping host:container (repeatable, replaces all)")
+	appEditCmd.Flags().
+		StringArrayVarP(&appEditPorts, "port", "p", nil, "Port mapping host:container (repeatable, replaces all)")
 	appEditCmd.Flags().StringArrayVarP(&appEditEnv, "env", "e", nil, "Set env var KEY=VALUE (repeatable)")
 	appEditCmd.Flags().StringVarP(&appEditDescription, "description", "d", "", "App description")
 	appEditCmd.Flags().StringArrayVarP(&appEditTags, "tag", "g", nil, "Tags (repeatable, replaces all)")
-	appEditCmd.Flags().StringVar(&appEditRestartPolicy, "restart-policy", "", "Restart policy: never, always, on-failure")
+	appEditCmd.Flags().
+		StringVar(&appEditRestartPolicy, "restart-policy", "", "Restart policy: never, always, on-failure")
 	appEditCmd.Flags().Float64Var(&appEditCPU, "cpu", 0, "CPU limit (cores)")
-	appEditCmd.Flags().Int64Var(&appEditMemory, "memory", 0, "Memory limit in MB")
+	appEditCmd.Flags().StringVar(&appEditMemory, "memory", "", "Memory limit (e.g., 512M, 2G)")
 
 	appLogsCmd.Flags().IntVarP(&appLogLines, "lines", "n", 100, "Number of log lines to show")
 	appLogsCmd.Flags().BoolVarP(&appLogFollow, "follow", "f", false, "Follow log output (poll every 2s)")
@@ -187,11 +193,11 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if mode == entities.ExecutionModeProcess && appBinary == "" {
-		return fmt.Errorf("--binary is required for process mode")
+		return errors.New("--binary is required for process mode")
 	}
 
 	if mode == entities.ExecutionModeContainer && len(appPorts) == 0 {
-		return fmt.Errorf("--port is required for container mode (e.g., -p 8080:80)")
+		return errors.New("--port is required for container mode (e.g., -p 8080:80)")
 	}
 
 	// Check if app already exists.
@@ -217,6 +223,14 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 	// Parse environment variables.
 	env := parseEnv(appEnv)
 
+	var memoryMB int64
+	if appMemory != "" {
+		memoryMB, err = size.ParseSizeMB(appMemory)
+		if err != nil {
+			return fmt.Errorf("invalid --memory value: %w", err)
+		}
+	}
+
 	app := &entities.AppSpec{
 		Name:          appName,
 		ExecutionMode: mode,
@@ -227,7 +241,7 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 		Env:           env,
 		Resources: entities.Resources{
 			CPU:      appCPU,
-			MemoryMB: appMemory,
+			MemoryMB: memoryMB,
 		},
 		RestartPolicy: restartPolicy,
 		Description:   appDescription,
@@ -255,6 +269,7 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+//nolint:funlen,gocognit,gocyclo,cyclop,revive // CLI handler with complex flag parsing and validation
 func runAppEdit(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
 
@@ -272,7 +287,7 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 
 	if cmd.Flags().Changed("image") {
 		if app.IsProcessMode() {
-			return fmt.Errorf("--image is not valid for process mode apps")
+			return errors.New("--image is not valid for process mode apps")
 		}
 		app.Image = appEditImage
 		changes = append(changes, fmt.Sprintf("  Image: %s", appEditImage))
@@ -280,7 +295,7 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 
 	if cmd.Flags().Changed("binary") {
 		if app.IsContainerMode() {
-			return fmt.Errorf("--binary is not valid for container mode apps")
+			return errors.New("--binary is not valid for container mode apps")
 		}
 		app.Binary = appEditBinary
 		changes = append(changes, fmt.Sprintf("  Binary: %s", appEditBinary))
@@ -301,9 +316,7 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 		if app.Env == nil {
 			app.Env = make(map[string]string)
 		}
-		for k, v := range env {
-			app.Env[k] = v
-		}
+		maps.Copy(app.Env, env)
 		changes = append(changes, fmt.Sprintf("  Env: %d var(s) updated", len(env)))
 	}
 
@@ -323,7 +336,10 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 		case entities.RestartPolicyNever, entities.RestartPolicyAlways, entities.RestartPolicyOnFailure:
 			// valid
 		default:
-			return fmt.Errorf("invalid restart policy: %s (must be 'never', 'always', or 'on-failure')", appEditRestartPolicy)
+			return fmt.Errorf(
+				"invalid restart policy: %s (must be 'never', 'always', or 'on-failure')",
+				appEditRestartPolicy,
+			)
 		}
 		app.RestartPolicy = rp
 		changes = append(changes, fmt.Sprintf("  Restart policy: %s", rp))
@@ -335,12 +351,16 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmd.Flags().Changed("memory") {
-		app.Resources.MemoryMB = appEditMemory
-		changes = append(changes, fmt.Sprintf("  Memory: %d MB", appEditMemory))
+		memMB, memErr := size.ParseSizeMB(appEditMemory)
+		if memErr != nil {
+			return fmt.Errorf("invalid --memory value: %w", memErr)
+		}
+		app.Resources.MemoryMB = memMB
+		changes = append(changes, fmt.Sprintf("  Memory: %d MB", memMB))
 	}
 
 	if len(changes) == 0 {
-		return fmt.Errorf("no changes specified; use flags to modify app fields (see --help)")
+		return errors.New("no changes specified; use flags to modify app fields (see --help)")
 	}
 
 	if err := store.SetApp(project.ID, app); err != nil {
@@ -352,11 +372,12 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 	for _, c := range changes {
 		fmt.Fprintln(out, c)
 	}
-	fmt.Fprintf(out, "\nNote: changes take effect on next deploy.\n")
+	fmt.Fprint(out, "\nNote: changes take effect on next deploy.\n")
 
 	return nil
 }
 
+//nolint:funlen,gocognit,gocyclo,cyclop,nestif,revive // CLI handler with complex deployment logic and binary upload
 func runAppDeploy(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -416,7 +437,7 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 			if openErr != nil {
 				return fmt.Errorf("failed to open binary %s: %w", app.Binary, openErr)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			stat, statErr := f.Stat()
 			if statErr != nil {
@@ -436,7 +457,15 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 			}
 
 			fileName := filepath.Base(app.Binary)
-			if uploadErr := rt.UploadBinary(ctx, instance.ID, appName, fileName, f, stat.Size(), checksum); uploadErr != nil {
+			if uploadErr := rt.UploadBinary(
+				ctx,
+				instance.ID,
+				appName,
+				fileName,
+				f,
+				stat.Size(),
+				checksum,
+			); uploadErr != nil {
 				return fmt.Errorf("failed to upload binary: %w", uploadErr)
 			}
 
@@ -514,6 +543,7 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	return w.Flush()
 }
 
+//nolint:funlen // CLI handler with detailed app info display
 func runAppInfo(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
 
@@ -552,14 +582,14 @@ func runAppInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(app.Env) > 0 {
-		fmt.Fprintf(out, "  Env:\n")
+		fmt.Fprint(out, "  Env:\n")
 		for k, v := range app.Env {
 			fmt.Fprintf(out, "    %s=%s\n", k, v)
 		}
 	}
 
 	if app.Resources.CPU > 0 || app.Resources.MemoryMB > 0 {
-		fmt.Fprintf(out, "  Resources:\n")
+		fmt.Fprint(out, "  Resources:\n")
 		if app.Resources.CPU > 0 {
 			fmt.Fprintf(out, "    CPU:    %.1f cores\n", app.Resources.CPU)
 		}
@@ -579,7 +609,7 @@ func runAppInfo(cmd *cobra.Command, args []string) error {
 	// Try to get live status.
 	liveStatuses := getLiveAppStatuses(project)
 	if s, ok := liveStatuses[appName]; ok {
-		fmt.Fprintf(out, "\nLive Status:\n")
+		fmt.Fprint(out, "\nLive Status:\n")
 		fmt.Fprintf(out, "  State:  %s\n", s.State)
 		fmt.Fprintf(out, "  ID:     %s\n", s.ID)
 		fmt.Fprintf(out, "  Status: %s\n", s.Status)
@@ -674,7 +704,7 @@ func getLiveAppStatuses(project *entities.Project) map[string]v1.AppStatus {
 	if err != nil {
 		return statuses
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -701,7 +731,8 @@ func parsePorts(portStrs []string) ([]entities.PortMapping, error) {
 		}
 
 		containerPort := hostPort
-		if len(parts) == 2 {
+		const partsLen = 2
+		if len(parts) == partsLen {
 			containerPort, err = strconv.Atoi(parts[1])
 			if err != nil {
 				return nil, fmt.Errorf("invalid port: %s", s)
@@ -720,9 +751,10 @@ func parsePorts(portStrs []string) ([]entities.PortMapping, error) {
 // parseEnv parses environment variable strings like "KEY=VALUE".
 func parseEnv(envStrs []string) map[string]string {
 	env := make(map[string]string)
+	const partsLen = 2
 	for _, s := range envStrs {
 		parts := strings.SplitN(s, "=", 2)
-		if len(parts) == 2 {
+		if len(parts) == partsLen {
 			env[parts[0]] = parts[1]
 		}
 	}
@@ -818,6 +850,8 @@ func runAppPushImage(cmd *cobra.Command, args []string) error {
 }
 
 // pushLocalImage exports a local Docker image, compresses it, and transfers it to the VM.
+//
+//nolint:funlen // Image export and transfer logic requires multiple steps
 func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, imageRef string) error {
 	fmt.Fprintf(out, "Exporting image '%s'...\n", imageRef)
 
@@ -826,8 +860,8 @@ func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, image
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
 
 	// Run docker save and pipe through gzip to temp file.
 	dockerSave := exec.CommandContext(ctx, "docker", "save", imageRef)
@@ -836,22 +870,23 @@ func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, image
 		return fmt.Errorf("failed to create pipe: %w", err)
 	}
 
-	if err := dockerSave.Start(); err != nil {
-		return fmt.Errorf("failed to run 'docker save %s': %w", imageRef, err)
+	startErr := dockerSave.Start()
+	if startErr != nil {
+		return fmt.Errorf("failed to run 'docker save %s': %w", imageRef, startErr)
 	}
 
 	gzWriter := gzip.NewWriter(tmpFile)
-	if _, err := io.Copy(gzWriter, saveOut); err != nil {
+	if _, copyErr := io.Copy(gzWriter, saveOut); copyErr != nil {
 		_ = dockerSave.Wait()
-		return fmt.Errorf("failed to compress image: %w", err)
+		return fmt.Errorf("failed to compress image: %w", copyErr)
 	}
-	if err := gzWriter.Close(); err != nil {
+	if closeErr := gzWriter.Close(); closeErr != nil {
 		_ = dockerSave.Wait()
-		return fmt.Errorf("failed to finalize compression: %w", err)
+		return fmt.Errorf("failed to finalize compression: %w", closeErr)
 	}
 
-	if err := dockerSave.Wait(); err != nil {
-		return fmt.Errorf("docker save failed: %w", err)
+	if waitErr := dockerSave.Wait(); waitErr != nil {
+		return fmt.Errorf("docker save failed: %w", waitErr)
 	}
 
 	// Get compressed file size.
@@ -877,14 +912,15 @@ func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, image
 		return fmt.Errorf("failed to seek: %w", err)
 	}
 
-	fmt.Fprintf(out, "  Compressed size: %.1f MB\n", float64(compressedSize)/(1024*1024))
-	fmt.Fprintf(out, "Pushing image to VM...\n")
+	const mbDivisor = 1024 * 1024
+	fmt.Fprintf(out, "  Compressed size: %.1f MB\n", float64(compressedSize)/mbDivisor)
+	fmt.Fprint(out, "Pushing image to VM...\n")
 
 	if err := rt.UploadImage(ctx, instanceID, imageRef, tmpFile, compressedSize, checksum); err != nil {
 		return fmt.Errorf("failed to upload image: %w", err)
 	}
 
-	fmt.Fprintf(out, "  Image loaded successfully\n")
+	fmt.Fprint(out, "  Image loaded successfully\n")
 	return nil
 }
 

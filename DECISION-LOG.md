@@ -340,6 +340,21 @@ Each entry follows a lightweight ADR (Architecture Decision Record) format: a on
 
 ---
 
+## VM Resource Editing (Feb 23, 2026)
+
+### ADR-036: Stop-and-redefine approach for VM resizing
+
+- **Decision**: Resize VM resources (CPU, memory, disk) by stopping the VM, redefining the domain XML via `conn.DomainDefineXML()`, optionally growing the disk via `qemu-img resize`, and starting the VM again.
+- **Context**: Users need to change VM resource allocation after project creation without destroying the project and losing deployed apps.
+- **Alternatives considered**:
+  - **Live resize (hotplug)** — Libvirt supports live vCPU and memory hotplug, but it requires complex guest cooperation (balloon driver, CPU online/offline), and the domain XML maximum must be set at creation time. Not all combinations work reliably.
+  - **Destroy and recreate** — Simpler but loses all deployed apps, VM state, and requires re-provisioning.
+  - **virsh setvcpus / setmem** — CLI-only, doesn't update the persistent definition, and requires running VM for some modes.
+- **Rationale**: `DomainDefineXML` on a shut-off domain is the safest, most reliable approach. It updates the persistent definition atomically. No guest cooperation needed. Disk resize via `qemu-img resize` on a stopped VM is also safe and well-tested. The constraint of requiring a stopped VM is acceptable — it's explicit, easy to understand, and avoids the complexity of live migration. The `project edit` CLI mirrors the existing `app edit` pattern.
+- **Status**: Accepted
+
+---
+
 ## Summary of Superseded Decisions
 
 | Original | Superseded by | What changed |

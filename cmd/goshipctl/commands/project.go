@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	"github.com/guilhermebr/goship/internal/shared/size"
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -30,8 +32,8 @@ var projectCmd = &cobra.Command{
 // Flags for project create.
 var (
 	projectCPU           float64
-	projectMemory        int64
-	projectDisk          int64
+	projectMemory        string
+	projectDisk          string
 	projectNetworkType   string
 	projectNetworkSource string
 )
@@ -122,6 +124,22 @@ var projectRestartCmd = &cobra.Command{
 	RunE:  runProjectRestart,
 }
 
+// Flags for project edit.
+var (
+	projectEditCPU    float64
+	projectEditMemory string
+	projectEditDisk   string
+)
+
+var projectEditCmd = &cobra.Command{
+	Use:   "edit <name>",
+	Short: "Edit project VM resources (CPU, memory, disk)",
+	Long: `Edit a project's VM resource allocation. The VM must be stopped before editing.
+Disk size can only be increased, not decreased.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runProjectEdit,
+}
+
 // Flags for project update-init.
 var (
 	updateInitBinary  string
@@ -138,16 +156,23 @@ var projectUpdateInitCmd = &cobra.Command{
 
 func init() {
 	projectCreateCmd.Flags().Float64Var(&projectCPU, "cpu", 1, "Number of CPU cores")
-	projectCreateCmd.Flags().Int64Var(&projectMemory, "memory", 512, "Memory in MB")
-	projectCreateCmd.Flags().Int64Var(&projectDisk, "disk", 4096, "Disk size in MB")
+	projectCreateCmd.Flags().StringVar(&projectMemory, "memory", "512M", "Memory (e.g., 512M, 8G)")
+	projectCreateCmd.Flags().StringVar(&projectDisk, "disk", "8G", "Disk size (e.g., 4G, 8192M)")
 	projectCreateCmd.Flags().StringVar(&projectNetworkType, "network-type", "", "Network type (network, bridge, user)")
-	projectCreateCmd.Flags().StringVar(&projectNetworkSource, "network-source", "", "Network source (network name or bridge name)")
+	projectCreateCmd.Flags().
+		StringVar(&projectNetworkSource, "network-source", "", "Network source (network name or bridge name)")
 
 	projectLogsCmd.Flags().IntVarP(&logsLines, "lines", "n", 100, "Number of log lines to show")
 	projectLogsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output (poll every 2s)")
-	projectLogsCmd.Flags().StringVar(&logsFile, "file", "", "Arbitrary log file path inside the VM (must be under /var/log/)")
+	projectLogsCmd.Flags().
+		StringVar(&logsFile, "file", "", "Arbitrary log file path inside the VM (must be under /var/log/)")
 
-	projectUpdateInitCmd.Flags().StringVar(&updateInitBinary, "binary", "", "Path to goship-init binary (default: --goship-init flag value)")
+	projectEditCmd.Flags().Float64Var(&projectEditCPU, "cpu", 0, "Number of CPU cores")
+	projectEditCmd.Flags().StringVar(&projectEditMemory, "memory", "", "Memory (e.g., 512M, 8G)")
+	projectEditCmd.Flags().StringVar(&projectEditDisk, "disk", "", "Disk size (e.g., 4G, 8192M; can only grow)")
+
+	projectUpdateInitCmd.Flags().
+		StringVar(&updateInitBinary, "binary", "", "Path to goship-init binary (default: --goship-init flag value)")
 	projectUpdateInitCmd.Flags().BoolVar(&updateInitRestart, "restart", false, "Restart the VM after successful update")
 
 	projectCmd.AddCommand(projectCreateCmd)
@@ -156,6 +181,7 @@ func init() {
 	projectCmd.AddCommand(projectInfoCmd)
 	projectCmd.AddCommand(projectConsoleCmd)
 	projectCmd.AddCommand(projectLogsCmd)
+	projectCmd.AddCommand(projectEditCmd)
 	projectCmd.AddCommand(projectStopCmd)
 	projectCmd.AddCommand(projectStartCmd)
 	projectCmd.AddCommand(projectRestartCmd)
@@ -169,10 +195,20 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 
 	printVerbose("Creating project: %s", name)
 
+	memoryMB, err := size.ParseSizeMB(projectMemory)
+	if err != nil {
+		return fmt.Errorf("invalid --memory value: %w", err)
+	}
+
+	diskMB, err := size.ParseSizeMB(projectDisk)
+	if err != nil {
+		return fmt.Errorf("invalid --disk value: %w", err)
+	}
+
 	resources := entities.Resources{
 		CPU:      projectCPU,
-		MemoryMB: projectMemory,
-		DiskMB:   projectDisk,
+		MemoryMB: memoryMB,
+		DiskMB:   diskMB,
 	}
 
 	// Create project in state store.
@@ -223,10 +259,11 @@ func runProjectList(cmd *cobra.Command, args []string) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tID\tSTATE\tRUNTIME\tCPU\tMEMORY\tCREATED")
 
+	const shortIDLen = 8
 	for _, p := range projects {
 		shortID := p.ID
-		if len(shortID) > 8 {
-			shortID = shortID[:8]
+		if len(shortID) > shortIDLen {
+			shortID = shortID[:shortIDLen]
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.0f\t%dMB\t%s\n",
 			p.Name,
@@ -301,7 +338,7 @@ func runProjectInfo(cmd *cobra.Command, args []string) error {
 	// Show instance info if available.
 	instance := store.GetInstance(project.ID)
 	if instance != nil {
-		fmt.Fprintf(out, "\nVM Instance:\n")
+		fmt.Fprint(out, "\nVM Instance:\n")
 		fmt.Fprintf(out, "  ID:       %s\n", instance.ID)
 		fmt.Fprintf(out, "  State:    %s\n", instance.State)
 		if instance.IPAddress != "" {
@@ -315,7 +352,7 @@ func runProjectInfo(cmd *cobra.Command, args []string) error {
 	// Show apps if any.
 	apps := store.GetApps(project.ID)
 	if len(apps) > 0 {
-		fmt.Fprintf(out, "\nApps:\n")
+		fmt.Fprint(out, "\nApps:\n")
 		for _, app := range apps {
 			if app.IsContainerMode() {
 				fmt.Fprintf(out, "  - %s (image: %s)\n", app.Name, app.Image)
@@ -351,12 +388,13 @@ func runProjectConsole(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Connecting to console of %s...\n", instance.DomainName)
-	fmt.Fprintf(cmd.OutOrStdout(), "Use Ctrl+] to exit the console.\n\n")
+	fmt.Fprint(cmd.OutOrStdout(), "Use Ctrl+] to exit the console.\n\n")
 
 	// Replace current process with virsh console for full TTY control.
 	return syscall.Exec(virshPath, []string{"virsh", "console", instance.DomainName}, os.Environ())
 }
 
+//nolint:funlen // CLI handler with streaming logs and polling logic
 func runProjectLogs(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
@@ -364,11 +402,11 @@ func runProjectLogs(cmd *cobra.Command, args []string) error {
 	logFile := logsFile
 	if logFile == "" && len(args) > 1 {
 		alias := args[1]
-		if path, ok := logAliases[alias]; ok {
-			logFile = path
-		} else {
+		path, ok := logAliases[alias]
+		if !ok {
 			return fmt.Errorf("unknown log source %q (known: cloud-init, goship-init)", alias)
 		}
+		logFile = path
 	}
 
 	project, err := store.GetProject(name)
@@ -386,22 +424,22 @@ func runProjectLogs(cmd *cobra.Command, args []string) error {
 	socketPath := filepath.Join(expandDataDir(dataDir), "vms", vmName, "goship.sock")
 
 	fetchLogs := func() (string, error) {
-		comm, err := lvrt.NewVMCommunicator(socketPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to connect to VM: %w", err)
+		comm, commErr := lvrt.NewVMCommunicator(socketPath)
+		if commErr != nil {
+			return "", fmt.Errorf("failed to connect to VM: %w", commErr)
 		}
-		defer comm.Close()
+		defer func() { _ = comm.Close() }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		resp, cmdErr := comm.SendCommand(ctx, &v1.InitCommand{
 			Action:  v1.ActionLogs,
 			Lines:   logsLines,
 			LogFile: logFile,
 		})
-		if err != nil {
-			return "", fmt.Errorf("failed to get logs: %w", err)
+		if cmdErr != nil {
+			return "", fmt.Errorf("failed to get logs: %w", cmdErr)
 		}
 		if resp.Status != v1.StatusOK {
 			return "", fmt.Errorf("agent error: %s", resp.Error)
@@ -448,6 +486,100 @@ func expandDataDir(dir string) string {
 	return dir
 }
 
+//nolint:funlen // CLI handler with complex flag parsing and VM reconfiguration
+func runProjectEdit(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	project, err := store.GetProject(name)
+	if err != nil {
+		return fmt.Errorf("project not found: %s", name)
+	}
+
+	instance := store.GetInstance(project.ID)
+	if instance == nil {
+		return fmt.Errorf("no VM instance found for project %s", name)
+	}
+
+	// Reconcile state from libvirt in case persisted state is stale.
+	if rt != nil {
+		rt.LoadInstance(instance)
+		if status, err := rt.GetInstanceStatus(ctx, instance.ID); err == nil {
+			if instance.State != status.State {
+				instance.State = status.State
+				_ = store.UpdateInstance(instance)
+			}
+		}
+	}
+
+	// Check VM is stopped.
+	if instance.State != entities.InstanceStateStopped {
+		return fmt.Errorf(
+			"VM must be stopped before editing (current state: %s); run 'goshipctl project stop %s' first",
+			instance.State,
+			name,
+		)
+	}
+
+	var changes []string
+
+	if cmd.Flags().Changed("cpu") {
+		project.Resources.CPU = projectEditCPU
+		changes = append(changes, fmt.Sprintf("  CPU: %.0f cores", projectEditCPU))
+	}
+
+	if cmd.Flags().Changed("memory") {
+		memMB, err := size.ParseSizeMB(projectEditMemory)
+		if err != nil {
+			return fmt.Errorf("invalid --memory value: %w", err)
+		}
+		project.Resources.MemoryMB = memMB
+		changes = append(changes, fmt.Sprintf("  Memory: %d MB", memMB))
+	}
+
+	if cmd.Flags().Changed("disk") {
+		diskMB, err := size.ParseSizeMB(projectEditDisk)
+		if err != nil {
+			return fmt.Errorf("invalid --disk value: %w", err)
+		}
+		if diskMB < project.Resources.DiskMB {
+			return fmt.Errorf(
+				"disk size can only grow: current %d MB, requested %d MB",
+				project.Resources.DiskMB,
+				diskMB,
+			)
+		}
+		project.Resources.DiskMB = diskMB
+		changes = append(changes, fmt.Sprintf("  Disk: %d MB", diskMB))
+	}
+
+	if len(changes) == 0 {
+		return errors.New("no changes specified; use --cpu, --memory, or --disk flags (see --help)")
+	}
+
+	// Load the instance into the runtime and apply changes.
+	rt.LoadInstance(instance)
+
+	if err := rt.ResizeInstance(ctx, instance.ID, project); err != nil {
+		return fmt.Errorf("failed to resize VM: %w", err)
+	}
+
+	// Persist updated project.
+	if err := store.UpdateProject(project); err != nil {
+		return fmt.Errorf("failed to save project: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Project '%s' updated:\n", name)
+	for _, c := range changes {
+		fmt.Fprintln(out, c)
+	}
+	fmt.Fprintf(out, "\nStart the VM to apply changes: goshipctl project start %s\n", name)
+
+	return nil
+}
+
 func runProjectStop(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -476,13 +608,41 @@ func runProjectStop(cmd *cobra.Command, args []string) error {
 		printError("failed to update instance state: %v", err)
 	}
 
-	project.State = entities.ProjectStateStopped
-	if err := store.UpdateProject(project); err != nil {
-		printError("failed to update project state: %v", err)
-	}
-
 	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM stopping (ACPI shutdown sent)\n", name)
-	return nil
+
+	// Wait for the domain to reach shut off state.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer waitCancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			printError("timed out waiting for VM to stop; state may still be 'stopping'")
+			return nil
+		case <-ticker.C:
+			status, err := rt.GetInstanceStatus(waitCtx, instance.ID)
+			if err != nil {
+				continue
+			}
+			if status.State == entities.InstanceStateStopped {
+				instance.State = entities.InstanceStateStopped
+				if err := store.UpdateInstance(instance); err != nil {
+					printError("failed to update instance state: %v", err)
+				}
+
+				project.State = entities.ProjectStateStopped
+				if err := store.UpdateProject(project); err != nil {
+					printError("failed to update project state: %v", err)
+				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM stopped\n", name)
+				return nil
+			}
+		}
+	}
 }
 
 func runProjectStart(cmd *cobra.Command, args []string) error {
@@ -557,7 +717,7 @@ func runProjectRestart(cmd *cobra.Command, args []string) error {
 	for {
 		select {
 		case <-waitCtx.Done():
-			return fmt.Errorf("timed out waiting for VM to stop")
+			return errors.New("timed out waiting for VM to stop")
 		case <-ticker.C:
 			status, err := rt.GetInstanceStatus(waitCtx, instance.ID)
 			if err != nil {
@@ -591,6 +751,7 @@ start:
 
 const updateInitChunkSize = 512 * 1024 // 512KB
 
+//nolint:funlen,gocognit,revive // CLI handler with multi-phase chunked binary transfer
 func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -611,13 +772,14 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 	if binaryPath == "" {
 		binaryPath = initBinaryPath // global --goship-init flag
 	}
+	binaryPath = expandDataDir(binaryPath)
 
 	// Read binary and compute checksum.
 	f, err := os.Open(binaryPath)
 	if err != nil {
 		return fmt.Errorf("failed to open binary %s: %w", binaryPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil {
@@ -626,14 +788,14 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 	totalSize := stat.Size()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("failed to compute checksum: %w", err)
+	if _, copyErr := io.Copy(h, f); copyErr != nil {
+		return fmt.Errorf("failed to compute checksum: %w", copyErr)
 	}
 	checksum := fmt.Sprintf("%x", h.Sum(nil))
 
 	// Seek back to beginning for chunked reading.
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek binary: %w", err)
+	if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+		return fmt.Errorf("failed to seek binary: %w", seekErr)
 	}
 
 	// Connect to VM via virtio-serial.
@@ -644,7 +806,7 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to VM: %w", err)
 	}
-	defer comm.Close()
+	defer func() { _ = comm.Close() }()
 
 	// Phase: begin
 	fmt.Fprintf(cmd.OutOrStdout(), "Updating goship-init in project '%s'...\n", name)
@@ -675,7 +837,7 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 			chunkNum++
 			encoded := base64.StdEncoding.EncodeToString(buf[:n])
 
-			resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+			resp, err = comm.SendCommand(ctx, &v1.InitCommand{
 				Action: v1.ActionUpdateInit,
 				Phase:  "data",
 				Data:   encoded,
@@ -688,7 +850,8 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 			}
 
 			sent += int64(n)
-			pct := float64(sent) / float64(totalSize) * 100
+			const percentMultiplier = 100
+			pct := float64(sent) / float64(totalSize) * percentMultiplier
 			fmt.Fprintf(cmd.OutOrStdout(), "  Sent chunk %d: %d/%d bytes (%.0f%%)\n", chunkNum, sent, totalSize, pct)
 		}
 
@@ -716,7 +879,7 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 
 	// Optionally restart the VM.
 	if updateInitRestart {
-		fmt.Fprintf(cmd.OutOrStdout(), "Restarting VM...\n")
+		fmt.Fprint(cmd.OutOrStdout(), "Restarting VM...\n")
 		return runProjectRestart(cmd, args)
 	}
 

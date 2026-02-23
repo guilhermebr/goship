@@ -41,7 +41,7 @@ func NewStore(dataDir string) (*Store, error) {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
@@ -96,7 +96,7 @@ func (s *Store) save() error {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	if err := os.WriteFile(s.path, data, 0644); err != nil {
+	if err := os.WriteFile(s.path, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -104,7 +104,11 @@ func (s *Store) save() error {
 }
 
 // CreateProject creates a new project.
-func (s *Store) CreateProject(name string, runtime entities.RuntimeType, resources entities.Resources) (*entities.Project, error) {
+func (s *Store) CreateProject(
+	name string,
+	runtime entities.RuntimeType,
+	resources entities.Resources,
+) (*entities.Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -85,7 +85,7 @@ func TestCloudInitMetaDataContent(t *testing.T) {
 
 	// Mount the ISO and read meta-data to verify content.
 	mountDir := filepath.Join(tmpDir, "mount")
-	if err := os.MkdirAll(mountDir, 0755); err != nil {
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
 		t.Fatalf("failed to create mount dir: %v", err)
 	}
 
@@ -204,7 +204,7 @@ func TestCloudInitUserDataContent_WithDocker(t *testing.T) {
 		"runcmd:",
 		"rc-update, add, cgroups, boot",
 		"service, cgroups, start",
-		"rc-update, add, docker, boot",
+		"rc-update, add, docker, default",
 		"service, docker, start",
 		"groups: wheel, docker",
 	} {

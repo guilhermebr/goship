@@ -1,6 +1,8 @@
 // Package runtime defines the ProjectRuntime interface and related types.
 // This interface abstracts VM lifecycle management, allowing different
 // runtime backends (QEMU, Kata, Firecracker) to be plugged in.
+//
+//nolint:revive // Package name intentionally matches Go's runtime; types prefixed for clarity
 package runtime
 
 import (
@@ -43,10 +45,25 @@ type ProjectRuntime interface {
 	ListInstances(ctx context.Context) ([]*entities.ProjectInstance, error)
 
 	// UploadBinary uploads a binary file into the VM for a specific app.
-	UploadBinary(ctx context.Context, instanceID string, appName string, fileName string, reader io.Reader, size int64, checksum string) error
+	UploadBinary(
+		ctx context.Context,
+		instanceID string,
+		appName string,
+		fileName string,
+		reader io.Reader,
+		size int64,
+		checksum string,
+	) error
 
 	// UploadImage uploads a Docker image tarball into the VM and loads it into Docker.
-	UploadImage(ctx context.Context, instanceID string, imageRef string, reader io.Reader, size int64, checksum string) error
+	UploadImage(
+		ctx context.Context,
+		instanceID string,
+		imageRef string,
+		reader io.Reader,
+		size int64,
+		checksum string,
+	) error
 
 	// GetAppLogs retrieves log output from an application inside a VM instance.
 	GetAppLogs(ctx context.Context, instanceID string, appName string, lines int) (string, error)
@@ -55,7 +72,16 @@ type ProjectRuntime interface {
 	StreamLogs(ctx context.Context, instanceID string, appName string, follow bool) (io.ReadCloser, error)
 
 	// ExecCommand executes a command inside a VM instance.
-	ExecCommand(ctx context.Context, instanceID string, appName string, cmd []string) (stdout, stderr string, exitCode int, err error)
+	ExecCommand(
+		ctx context.Context,
+		instanceID string,
+		appName string,
+		cmd []string,
+	) (stdout, stderr string, exitCode int, err error)
+
+	// ResizeInstance updates the VM definition with new resource values from the project.
+	// The VM must be stopped before calling this method.
+	ResizeInstance(ctx context.Context, instanceID string, project *entities.Project) error
 }
 
 // CapabilityProvider defines methods for discovering host capabilities.
@@ -68,12 +94,16 @@ type CapabilityProvider interface {
 }
 
 // RuntimeWithCapabilities combines ProjectRuntime with capability discovery.
+//
+//nolint:revive // Intentional naming for clarity in external packages
 type RuntimeWithCapabilities interface {
 	ProjectRuntime
 	CapabilityProvider
 }
 
 // RuntimeConfig contains configuration for a runtime backend.
+//
+//nolint:revive // Intentional naming for clarity in external packages
 type RuntimeConfig struct {
 	// DataDir is the directory for runtime data (images, state, etc.)
 	DataDir string
@@ -114,7 +144,7 @@ func DefaultConfig() *RuntimeConfig {
 		VMImagePath:       "~/.goship/images/goship-vm.qcow2",
 		DefaultCPU:        1,
 		DefaultMemoryMB:   512,
-		DefaultDiskMB:     4096,
+		DefaultDiskMB:     8192,
 		NetworkType:       "network",
 		NetworkSource:     "default",
 		EnableKVM:         true,
@@ -126,6 +156,8 @@ func DefaultConfig() *RuntimeConfig {
 }
 
 // RuntimeOption is a function that configures a RuntimeConfig.
+//
+//nolint:revive // Intentional naming for clarity in external packages
 type RuntimeOption func(*RuntimeConfig)
 
 // WithDataDir sets the data directory.

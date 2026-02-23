@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -10,11 +11,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/guilhermebr/goship/internal/shared/size"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
 // Parse reads a docker-compose.yml file and returns a list of AppSpecs, build contexts, and warnings.
-func Parse(path string) ([]entities.AppSpec, map[string]BuildContext, []string, error) {
+//
+//nolint:revive // Four return values needed for complete compose parsing result
+func Parse(path string) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to read compose file: %w", err)
@@ -23,19 +27,20 @@ func Parse(path string) ([]entities.AppSpec, map[string]BuildContext, []string, 
 }
 
 // ParseBytes parses docker-compose.yml content and returns a list of AppSpecs, build contexts, and warnings.
-func ParseBytes(data []byte) ([]entities.AppSpec, map[string]BuildContext, []string, error) {
+//
+//nolint:funlen,gocognit,gocyclo,cyclop,revive // Compose parsing inherently complex with multiple field transformations
+func ParseBytes(data []byte) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
 	var cf ComposeFile
 	if err := yaml.Unmarshal(data, &cf); err != nil {
 		return nil, nil, nil, fmt.Errorf("invalid compose file: %w", err)
 	}
 
 	if len(cf.Services) == 0 {
-		return nil, nil, nil, fmt.Errorf("no services defined in compose file")
+		return nil, nil, nil, errors.New("no services defined in compose file")
 	}
 
-	var warnings []string
-	var apps []entities.AppSpec
-	builds := make(map[string]BuildContext)
+	var appList []entities.AppSpec
+	buildMap := make(map[string]BuildContext)
 
 	// Sort service names for deterministic order.
 	names := make([]string, 0, len(cf.Services))
@@ -113,7 +118,7 @@ func ParseBytes(data []byte) ([]entities.AppSpec, map[string]BuildContext, []str
 			}
 			bc.ImageName = fmt.Sprintf("goship-%s:latest", name)
 			app.Image = bc.ImageName
-			builds[name] = *bc
+			buildMap[name] = *bc
 		}
 
 		if svc.Image == "" && svc.Build == nil {
@@ -129,10 +134,10 @@ func ParseBytes(data []byte) ([]entities.AppSpec, map[string]BuildContext, []str
 			warnings = append(warnings, fmt.Sprintf("service %q: networks is not supported (ignored)", name))
 		}
 
-		apps = append(apps, app)
+		appList = append(appList, app)
 	}
 
-	return apps, builds, warnings, nil
+	return appList, buildMap, warnings, nil
 }
 
 // parseCommand parses a compose command field which can be a string or list of strings.
@@ -157,6 +162,11 @@ func parseCommand(v any) ([]string, error) {
 
 // parsePorts parses compose port strings like "8080:80", "8080:80/udp", "127.0.0.1:8080:80".
 func parsePorts(portStrs []string) ([]entities.PortMapping, error) {
+	const (
+		portPartsHostContainer   = 2
+		portPartsIPHostContainer = 3
+	)
+
 	var ports []entities.PortMapping
 	for _, s := range portStrs {
 		protocol := "tcp"
@@ -170,9 +180,9 @@ func parsePorts(portStrs []string) ([]entities.PortMapping, error) {
 		// Handle ip:hostPort:containerPort format by stripping the IP bind address.
 		parts := strings.Split(s, ":")
 		switch len(parts) {
-		case 2:
+		case portPartsHostContainer:
 			// hostPort:containerPort
-		case 3:
+		case portPartsIPHostContainer:
 			// ip:hostPort:containerPort — drop the IP
 			parts = parts[1:]
 		default:
@@ -213,8 +223,9 @@ func parseEnvironment(v any) (map[string]string, error) {
 			if !ok {
 				return nil, fmt.Errorf("invalid environment element: %v", item)
 			}
-			parts := strings.SplitN(s, "=", 2)
-			if len(parts) == 2 {
+			const envKeyValueParts = 2
+			parts := strings.SplitN(s, "=", envKeyValueParts)
+			if len(parts) == envKeyValueParts {
 				env[parts[0]] = parts[1]
 			} else {
 				env[parts[0]] = ""
@@ -229,10 +240,12 @@ func parseEnvironment(v any) (map[string]string, error) {
 
 // parseVolumes parses compose volume strings like "source:dest" or "source:dest:ro".
 func parseVolumes(volStrs []string) ([]entities.VolumeMount, error) {
+	const minVolumeParts = 2
+
 	var vols []entities.VolumeMount
 	for _, s := range volStrs {
 		parts := strings.SplitN(s, ":", 3)
-		if len(parts) < 2 {
+		if len(parts) < minVolumeParts {
 			return nil, fmt.Errorf("invalid volume %q: expected source:destination", s)
 		}
 
@@ -257,9 +270,8 @@ func mapRestartPolicy(policy string) entities.RestartPolicy {
 		return entities.RestartPolicyAlways
 	case "on-failure":
 		return entities.RestartPolicyOnFailure
-	case "no":
-		return entities.RestartPolicyNever
 	default:
+		// "no" and any unknown policy map to never
 		return entities.RestartPolicyNever
 	}
 }
@@ -319,28 +331,5 @@ func parseBuild(v any) (*BuildContext, error) {
 
 // parseMemory parses a memory string like "512m", "1g", "256M", "2G" into megabytes.
 func parseMemory(s string) (int64, error) {
-	s = strings.TrimSpace(s)
-	if len(s) == 0 {
-		return 0, fmt.Errorf("empty memory value")
-	}
-
-	suffix := strings.ToLower(s[len(s)-1:])
-	numStr := s[:len(s)-1]
-
-	switch suffix {
-	case "m":
-		val, err := strconv.ParseInt(numStr, 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return val, nil
-	case "g":
-		val, err := strconv.ParseInt(numStr, 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return val * 1024, nil
-	default:
-		return 0, fmt.Errorf("unsupported memory suffix %q (use m or g)", suffix)
-	}
+	return size.ParseSizeMB(s)
 }

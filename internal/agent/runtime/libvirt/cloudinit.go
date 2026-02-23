@@ -1,6 +1,7 @@
 package libvirt
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,18 +20,20 @@ type CloudInitConfig struct {
 // cloud-init meta-data and user-data derived from config.
 //
 // It requires either genisoimage or mkisofs to be available on the host.
+//
+//nolint:funlen // Cloud-init ISO generation requires sequential steps
 func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 	tmpDir, err := os.MkdirTemp("", "goship-cloudinit-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write meta-data.
 	metaData := fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", config.InstanceID, config.Hostname)
 	metaDataPath := filepath.Join(tmpDir, "meta-data")
-	if err := os.WriteFile(metaDataPath, []byte(metaData), 0644); err != nil {
-		return fmt.Errorf("failed to write meta-data: %w", err)
+	if writeErr := os.WriteFile(metaDataPath, []byte(metaData), 0o644); writeErr != nil {
+		return fmt.Errorf("failed to write meta-data: %w", writeErr)
 	}
 
 	// Write user-data.
@@ -51,7 +54,11 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 		// cgroups must be running before Docker can start on Alpine.
 		userData += "  - [rc-update, add, cgroups, boot]\n"
 		userData += "  - [service, cgroups, start]\n"
-		userData += "  - [rc-update, add, docker, boot]\n"
+		// Docker must be in the 'default' runlevel (not 'boot') because its init
+		// script has 'need net'. If Docker is in 'boot', cloud-init's network
+		// reconfiguration during the boot→default transition stops Docker and it
+		// fails to restart ("cannot start docker as networking would not start").
+		userData += "  - [rc-update, add, docker, default]\n"
 		userData += "  - [service, docker, start]\n"
 	}
 
@@ -75,8 +82,8 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 		userData += fmt.Sprintf("  - %s\n", config.SSHKey)
 	}
 	userDataPath := filepath.Join(tmpDir, "user-data")
-	if err := os.WriteFile(userDataPath, []byte(userData), 0644); err != nil {
-		return fmt.Errorf("failed to write user-data: %w", err)
+	if writeErr := os.WriteFile(userDataPath, []byte(userData), 0o644); writeErr != nil {
+		return fmt.Errorf("failed to write user-data: %w", writeErr)
 	}
 
 	// Find ISO generation tool.
@@ -86,7 +93,17 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 	}
 
 	// Generate ISO.
-	cmd := exec.Command(isoTool, "-output", outputPath, "-volid", "cidata", "-joliet", "-rock", userDataPath, metaDataPath)
+	cmd := exec.Command(
+		isoTool,
+		"-output",
+		outputPath,
+		"-volid",
+		"cidata",
+		"-joliet",
+		"-rock",
+		userDataPath,
+		metaDataPath,
+	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s failed: %w\n%s", isoTool, err, output)
@@ -103,5 +120,5 @@ func findISOTool() (string, error) {
 	if path, err := exec.LookPath("mkisofs"); err == nil {
 		return path, nil
 	}
-	return "", fmt.Errorf("neither genisoimage nor mkisofs found in PATH; install one to use cloud-init")
+	return "", errors.New("neither genisoimage nor mkisofs found in PATH; install one to use cloud-init")
 }
