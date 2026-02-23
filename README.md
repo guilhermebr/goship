@@ -72,6 +72,7 @@ GoShip is built around a simple model:
 - **Process apps** — Deploy binaries directly with auto-restart, exponential backoff, and per-process log files
 - **Binary upload** — Transparent chunked transfer of local binaries into VMs over virtio-serial
 - **Local image deploy** — `--local-image` flag exports a host Docker image, compresses it, and pushes it into the VM before deploying
+- **Compose build support** — Services with `build:` in docker-compose.yml are built locally and pushed into VMs automatically via `compose up`
 - **Image management** — Pull base Alpine cloud images, build local images, push images into VMs (`app push-image`)
 - **App editing** — Modify app specs (ports, env, image, resources) without redeploying
 - **Boot progress streaming** — Real-time cloud-init log output during project creation
@@ -130,6 +131,12 @@ goshipctl app list myapp
 goshipctl app logs myapp web
 goshipctl app logs myapp worker --follow
 
+# Deploy multi-service apps with docker-compose.yml
+# Services with build: are built locally and pushed into the VM
+goshipctl compose up myapp -f docker-compose.yml
+goshipctl compose ps myapp
+goshipctl compose down myapp
+
 # Edit an app and redeploy
 goshipctl app edit myapp web --port 9090:80
 goshipctl app deploy myapp web
@@ -153,7 +160,7 @@ See the [Getting Started guide](docs/getting-started.md) for the full walkthroug
 | [CLI Reference](docs/cli-reference.md) | Every command, flag, and example |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
 | [Design Document](docs/DESIGN.md) | Full architecture RFC |
-| [Decision Log](DECISION-LOG.md) | Architectural decisions and their rationale (ADR-001 through ADR-034) |
+| [Decision Log](DECISION-LOG.md) | Architectural decisions and their rationale (ADR-001 through ADR-035) |
 
 ---
 

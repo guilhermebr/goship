@@ -21,7 +21,7 @@ BUILD_DIR=bin
 CMD_DIR=cmd
 
 # Install directories
-PREFIX ?= /usr/local
+PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
 
 # Version info
@@ -80,21 +80,22 @@ tidy:
 	@echo "Tidying dependencies..."
 	$(GOMOD) tidy
 
-# Install binaries to system path
+# Install binaries
 install: build
-	@echo "Installing GoShip to $(BINDIR)..."
+	@echo "Installing GoShip..."
 	install -d $(BINDIR)
 	install -m 755 $(BUILD_DIR)/$(GOSHIPCTL) $(BINDIR)/$(GOSHIPCTL)
-	install -m 755 $(BUILD_DIR)/$(GOSHIP_INIT) $(BINDIR)/$(GOSHIP_INIT)
+	install -d $(HOME)/.goship/bin
+	install -m 755 $(BUILD_DIR)/$(GOSHIP_INIT) $(HOME)/.goship/bin/$(GOSHIP_INIT)
 	@echo "GoShip installed successfully."
 	@echo "  $(BINDIR)/$(GOSHIPCTL)"
-	@echo "  $(BINDIR)/$(GOSHIP_INIT)"
+	@echo "  $(HOME)/.goship/bin/$(GOSHIP_INIT)"
 
 # Remove installed binaries
 uninstall:
-	@echo "Removing GoShip from $(BINDIR)..."
+	@echo "Removing GoShip..."
 	rm -f $(BINDIR)/$(GOSHIPCTL)
-	rm -f $(BINDIR)/$(GOSHIP_INIT)
+	rm -f $(HOME)/.goship/bin/$(GOSHIP_INIT)
 	@echo "GoShip uninstalled."
 
 # GoReleaser: local snapshot release (dry run)

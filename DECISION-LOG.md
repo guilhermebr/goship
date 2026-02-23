@@ -325,6 +325,21 @@ Each entry follows a lightweight ADR (Architecture Decision Record) format: a on
 
 ---
 
+## Compose Build Support (Feb 22, 2026)
+
+### ADR-035: Build-and-push for compose services with `build:` context
+
+- **Decision**: When a compose service has `build:` but no `image:`, run `docker build` on the host and push the resulting image into the VM using the existing `pushLocalImage` flow, rather than skipping the service.
+- **Context**: Docker Compose files commonly use `build: .` for application services that are built from local source. GoShip's compose parser previously skipped these services with a warning ("build is not supported"), which meant users had to manually build and tag images before deploying.
+- **Alternatives considered**:
+  - **Keep skipping** — Simple, but breaks the most common compose workflow where the app service uses `build:`.
+  - **Build inside the VM** — Send the build context into the VM and run `docker build` there. Avoids host Docker dependency but requires transferring potentially large source trees over virtio-serial and having Docker build tooling ready inside the VM.
+  - **Require explicit `image:` alongside `build:`** — Force users to add an image name. Less ergonomic and non-standard compared to Docker Compose behavior.
+- **Rationale**: Building on the host matches the Docker Compose workflow: `docker compose build` runs on the host, then images are used by services. GoShip already has the `pushLocalImage` mechanism (docker save, gzip, virtio-serial transfer, docker load) used by `app deploy --local-image` and `app push-image`. Reusing this for compose builds requires no new protocol or infrastructure. A deterministic image name (`goship-<service>:latest`) is generated for services without an explicit `image:` field. The `--build` flag (default: `true`) lets users skip builds when images are already pushed.
+- **Status**: Accepted
+
+---
+
 ## Summary of Superseded Decisions
 
 | Original | Superseded by | What changed |
