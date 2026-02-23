@@ -10,6 +10,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
@@ -20,6 +21,10 @@ import (
 const (
 	containerStateExited       = "exited"
 	bytesPerMegabyte     int64 = 1024 * 1024
+
+	// goshipNetworkName is the user-defined Docker bridge network that provides
+	// DNS-based service discovery between GoShip-managed containers.
+	goshipNetworkName = "goship"
 )
 
 // DockerManager manages Docker containers inside the VM.
@@ -31,13 +36,39 @@ type DockerManager struct {
 // Ensure DockerManager implements AppExecutor.
 var _ AppExecutor = (*DockerManager)(nil)
 
-// NewDockerManager creates a new Docker manager.
+// NewDockerManager creates a new Docker manager and ensures the GoShip
+// bridge network exists for container-to-container DNS resolution.
 func NewDockerManager() (*DockerManager, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
-	return &DockerManager{client: cli}, nil
+
+	m := &DockerManager{client: cli}
+
+	if err := m.ensureNetwork(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ensure goship network: %w", err)
+	}
+
+	return m, nil
+}
+
+// ensureNetwork creates the "goship" bridge network if it doesn't already exist.
+// User-defined bridge networks provide automatic DNS resolution between containers.
+func (m *DockerManager) ensureNetwork(ctx context.Context) error {
+	_, err := m.client.NetworkInspect(ctx, goshipNetworkName, network.InspectOptions{})
+	if err == nil {
+		return nil // Network already exists.
+	}
+
+	_, err = m.client.NetworkCreate(ctx, goshipNetworkName, network.CreateOptions{
+		Driver: "bridge",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create network %s: %w", goshipNetworkName, err)
+	}
+
+	return nil
 }
 
 // LoadImage loads a Docker image from a tar archive reader (e.g. from docker save).
@@ -150,8 +181,17 @@ func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error
 		}
 	}
 
+	// Attach to goship network with app name as DNS alias.
+	networkConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			goshipNetworkName: {
+				Aliases: []string{app.Name},
+			},
+		},
+	}
+
 	// Create and start container.
-	resp, err := m.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
+	resp, err := m.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, containerName)
 	if err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
