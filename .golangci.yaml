@@ -94,12 +94,6 @@ linters:
         - G304
         # Unhandled errors - already covered by errcheck
         - G104
-        # Path traversal via taint - GoShip uses controlled internal paths
-        - G703
-        # XSS via taint - GoShip is a CLI tool, not a web server
-        - G705
-        # Log injection via taint - GoShip logs to local files/stdout only
-        - G706
     govet:
       enable-all: true
       disable:
@@ -154,8 +148,6 @@ linters:
           disabled: true
         - name: package-comments
           disabled: true
-        - name: package-directory-mismatch
-          disabled: true
         - name: redundant-import-alias
           disabled: true
         - name: unhandled-error
@@ -183,6 +175,14 @@ linters:
       - linters:
           - gosec
         text: "G301|G302|G306"
+      # Taint analysis rules - GoShip is a CLI tool, not a web app
+      - linters:
+          - gosec
+        text: "G703|G705|G706"
+      # Package name "gsinit" intentionally differs from dir "init" (reserved keyword)
+      - linters:
+          - revive
+        text: "package-directory-mismatch"
 
 issues:
   max-issues-per-linter: 0
