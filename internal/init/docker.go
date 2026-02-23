@@ -38,7 +38,7 @@ var _ AppExecutor = (*DockerManager)(nil)
 
 // NewDockerManager creates a new Docker manager and ensures the GoShip
 // bridge network exists for container-to-container DNS resolution.
-func NewDockerManager() (*DockerManager, error) {
+func NewDockerManager(ctx context.Context) (*DockerManager, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
@@ -46,7 +46,7 @@ func NewDockerManager() (*DockerManager, error) {
 
 	m := &DockerManager{client: cli}
 
-	if err := m.ensureNetwork(context.Background()); err != nil {
+	if err := m.ensureNetwork(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure goship network: %w", err)
 	}
 

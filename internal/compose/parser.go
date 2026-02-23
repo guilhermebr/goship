@@ -52,7 +52,9 @@ func Parse(path string) (apps []entities.AppSpec, builds map[string]BuildContext
 // Use WithBaseDir option to enable env_file resolution relative to the compose file directory.
 //
 //nolint:funlen,gocognit,gocyclo,cyclop,revive // Compose parsing inherently complex with multiple field transformations
-func ParseBytes(data []byte, opts ...ParseOption) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
+func ParseBytes(
+	data []byte, opts ...ParseOption,
+) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
 	var cfg parseConfig
 	for _, opt := range opts {
 		opt(&cfg)

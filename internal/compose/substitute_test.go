@@ -10,7 +10,7 @@ func TestSubstituteVars_BraceSyntax(t *testing.T) {
 		"DB_PASS": "secret",
 	}
 
-	env := map[string]string{
+	env := map[string]string{ //nolint:gosec // test data, not real credentials
 		"USER":     "${DB_USER}",
 		"PASSWORD": "${DB_PASS}",
 		"LITERAL":  "no-vars-here",
@@ -51,9 +51,9 @@ func TestSubstituteVars_DefaultValue(t *testing.T) {
 	}
 
 	env := map[string]string{
-		"WITH_DEFAULT":    "${UNSET_VAR:-fallback}",
+		"WITH_DEFAULT":     "${UNSET_VAR:-fallback}",
 		"SET_WITH_DEFAULT": "${SET_VAR:-fallback}",
-		"EMPTY_DEFAULT":   "${UNSET:-}",
+		"EMPTY_DEFAULT":    "${UNSET:-}",
 	}
 
 	result := substituteVars(env, context)

@@ -388,7 +388,7 @@ func waitForDocker(ctx context.Context, timeout time.Duration) (*DockerManager, 
 	initialDeadline := time.Now().Add(initialWait)
 
 	for time.Now().Before(initialDeadline) {
-		docker, err := NewDockerManager()
+		docker, err := NewDockerManager(ctx)
 		if err == nil {
 			if _, err = docker.GetDockerVersion(ctx); err == nil {
 				return docker, nil
@@ -410,7 +410,7 @@ func waitForDocker(ctx context.Context, timeout time.Duration) (*DockerManager, 
 
 	// Second pass: wait for Docker after recovery attempt.
 	for time.Now().Before(deadline) {
-		docker, err := NewDockerManager()
+		docker, err := NewDockerManager(ctx)
 		if err == nil {
 			if _, err = docker.GetDockerVersion(ctx); err == nil {
 				log.Print("goship-init: Docker recovered after service restart")

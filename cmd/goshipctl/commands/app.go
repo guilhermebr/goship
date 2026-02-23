@@ -226,15 +226,10 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse environment variables: --env-file is the base, --env overrides.
-	env := make(map[string]string)
-	if appEnvFile != "" {
-		fileEnv, err := compose.LoadEnvFile(appEnvFile)
-		if err != nil {
-			return fmt.Errorf("failed to load --env-file: %w", err)
-		}
-		maps.Copy(env, fileEnv)
+	env, err := mergeEnvFlags(appEnvFile, appEnv)
+	if err != nil {
+		return err
 	}
-	maps.Copy(env, parseEnv(appEnv))
 
 	var memoryMB int64
 	if appMemory != "" {
@@ -266,20 +261,22 @@ func runAppCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save app: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "App '%s' created in project '%s'\n", appName, projectName)
-	fmt.Fprintf(out, "  Mode:  %s\n", mode)
-	if mode == entities.ExecutionModeContainer && appImage != "" {
-		fmt.Fprintf(out, "  Image: %s\n", appImage)
-	} else if mode == entities.ExecutionModeProcess {
-		fmt.Fprintf(out, "  Binary: %s\n", appBinary)
-	}
-	if len(ports) > 0 {
-		fmt.Fprintf(out, "  Ports: %s\n", formatPorts(ports))
-	}
-	fmt.Fprintf(out, "\nUse 'goshipctl app deploy %s %s' to start it.\n", projectName, appName)
-
+	printAppCreated(cmd.OutOrStdout(), app, projectName)
 	return nil
+}
+
+func printAppCreated(out io.Writer, app *entities.AppSpec, projectName string) {
+	fmt.Fprintf(out, "App '%s' created in project '%s'\n", app.Name, projectName)
+	fmt.Fprintf(out, "  Mode:  %s\n", app.ExecutionMode)
+	if app.IsContainerMode() && app.Image != "" {
+		fmt.Fprintf(out, "  Image: %s\n", app.Image)
+	} else if app.IsProcessMode() {
+		fmt.Fprintf(out, "  Binary: %s\n", app.Binary)
+	}
+	if len(app.Ports) > 0 {
+		fmt.Fprintf(out, "  Ports: %s\n", formatPorts(app.Ports))
+	}
+	fmt.Fprintf(out, "\nUse 'goshipctl app deploy %s %s' to start it.\n", projectName, app.Name)
 }
 
 //nolint:funlen,gocognit,gocyclo,cyclop,revive // CLI handler with complex flag parsing and validation
@@ -324,19 +321,8 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmd.Flags().Changed("env-file") || cmd.Flags().Changed("env") {
-		if app.Env == nil {
-			app.Env = make(map[string]string)
-		}
-		// Load env file first (base), then --env overrides.
-		if appEditEnvFile != "" {
-			fileEnv, loadErr := compose.LoadEnvFile(appEditEnvFile)
-			if loadErr != nil {
-				return fmt.Errorf("failed to load --env-file: %w", loadErr)
-			}
-			maps.Copy(app.Env, fileEnv)
-		}
-		if cmd.Flags().Changed("env") {
-			maps.Copy(app.Env, parseEnv(appEditEnv))
+		if err := applyEnvEdits(app, cmd, appEditEnvFile, appEditEnv); err != nil {
+			return err
 		}
 		changes = append(changes, fmt.Sprintf("  Env: %d var(s) total", len(app.Env)))
 	}
@@ -943,6 +929,38 @@ func pushLocalImage(ctx context.Context, out io.Writer, instanceID string, image
 
 	fmt.Fprint(out, "  Image loaded successfully\n")
 	return nil
+}
+
+// applyEnvEdits merges --env-file and --env flags into an existing app's env map.
+func applyEnvEdits(app *entities.AppSpec, cmd *cobra.Command, envFile string, envFlags []string) error {
+	if app.Env == nil {
+		app.Env = make(map[string]string)
+	}
+	if envFile != "" {
+		fileEnv, err := compose.LoadEnvFile(envFile)
+		if err != nil {
+			return fmt.Errorf("failed to load --env-file: %w", err)
+		}
+		maps.Copy(app.Env, fileEnv)
+	}
+	if cmd.Flags().Changed("env") {
+		maps.Copy(app.Env, parseEnv(envFlags))
+	}
+	return nil
+}
+
+// mergeEnvFlags loads --env-file (base) and applies --env overrides.
+func mergeEnvFlags(envFile string, envFlags []string) (map[string]string, error) {
+	env := make(map[string]string)
+	if envFile != "" {
+		fileEnv, err := compose.LoadEnvFile(envFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load --env-file: %w", err)
+		}
+		maps.Copy(env, fileEnv)
+	}
+	maps.Copy(env, parseEnv(envFlags))
+	return env, nil
 }
 
 // formatPorts formats port mappings for display.

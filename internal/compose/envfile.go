@@ -20,7 +20,7 @@ func LoadEnvFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open env file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	env := make(map[string]string)
 	scanner := bufio.NewScanner(f)
@@ -85,7 +85,8 @@ func parseEnvFileField(v any) ([]string, error) {
 // stripQuotes removes matching surrounding quotes (single or double) from a value.
 // It also strips inline comments from unquoted values.
 func stripQuotes(s string) string {
-	if len(s) >= 2 {
+	const minQuotedLen = 2
+	if len(s) >= minQuotedLen {
 		if (s[0] == '"' && s[len(s)-1] == '"') ||
 			(s[0] == '\'' && s[len(s)-1] == '\'') {
 			return s[1 : len(s)-1]
