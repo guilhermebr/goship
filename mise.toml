@@ -1,0 +1,5 @@
+[tools]
+go = "1.26"
+
+[settings]
+experimental = true

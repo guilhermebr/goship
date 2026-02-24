@@ -1,7 +1,7 @@
 # GoShip Makefile
 
 .PHONY: all build clean test lint fmt vet tidy help install uninstall
-.PHONY: build-goshipctl build-goship-init release-local release-check
+.PHONY: build-goshipctl build-goship-init release-local release-check setup
 
 # Go parameters
 GOCMD=go
@@ -30,6 +30,12 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LD_VERSION_FLAGS := -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)
 LDFLAGS := -ldflags "$(LD_VERSION_FLAGS)"
+
+# Install mise and project toolchain (Go, golangci-lint, etc.)
+setup:
+	@command -v mise >/dev/null 2>&1 || { echo "Installing mise..."; curl https://mise.run | sh; }
+	@echo "Installing project tools via mise..."
+	mise install
 
 # Default target
 all: build
@@ -134,6 +140,7 @@ help:
 	@echo "  clean            - Clean build artifacts"
 	@echo "  release-local    - Build snapshot release locally (dry run)"
 	@echo "  release-check    - Validate .goreleaser.yml config"
+	@echo "  setup            - Install mise and project tools (Go, etc.)"
 	@echo "  help             - Show this help"
 	@echo ""
 	@echo "Variables:"

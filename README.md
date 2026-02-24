@@ -173,7 +173,7 @@ See the [Getting Started guide](docs/getting-started.md) for the full walkthroug
 ## Prerequisites
 
 - Linux (KVM recommended; QEMU TCG software emulation used as fallback when `/dev/kvm` is unavailable)
-- Go 1.26+
+- Go 1.26+ (install via [mise](https://mise.jdx.dev): `make setup` or `mise install`)
 - System packages: `libvirt-dev`, `qemu-system-x86`, `qemu-utils`, `genisoimage`, `libguestfs-tools`
 - User in the `libvirt` group
 
