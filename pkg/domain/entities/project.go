@@ -54,6 +54,9 @@ type Project struct {
 	State ProjectState `json:"state"`
 	// Labels for organization
 	Labels map[string]string `json:"labels,omitempty"`
+	// Env holds project-level environment variables (inherited by all apps).
+	// Values prefixed with "encrypted:" are vault-encrypted secrets.
+	Env map[string]string `json:"env,omitempty"`
 	// Creation timestamp
 	CreatedAt time.Time `json:"created_at"`
 	// Last update timestamp

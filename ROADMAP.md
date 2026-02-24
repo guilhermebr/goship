@@ -15,17 +15,17 @@ GoShip is built incrementally. This roadmap lists what has shipped and what is p
 - [x] Boot progress streaming — real-time cloud-init output during provisioning
 - [x] KVM/TCG fallback — automatic hardware detection, graceful software emulation
 - [x] Virtio-serial communication — JSON protocol between host and VM agent
+- [x] Environment variables — project-level env vars with AES-256-GCM vault encryption for secrets
 
 ---
 
 ## API & CLI
 
 - [ ] REST API server (goshipd) and CLI HTTP client
-- [ ] Security — API key authentication, TLS, vault-encrypted secrets
+- [ ] Security — API key authentication, TLS
 
-## Environment & Networking
+## Networking
 
-- [ ] Project-level environment variables with encrypted secrets
 - [ ] Reverse proxy with domain-based routing to VM ports
 
 ## Multi-Node

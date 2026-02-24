@@ -355,6 +355,29 @@ Each entry follows a lightweight ADR (Architecture Decision Record) format: a on
 
 ---
 
+## Environment Variables & Vault Encryption (Feb 24, 2026)
+
+### ADR-037: Project-level environment variables with vault encryption
+
+- **Decision**: Add project-level environment variables (`Project.Env`) that are inherited by all apps at deploy time, with optional AES-256-GCM encryption for sensitive values via `--secret` flag.
+- **Context**: Applications need configuration values (database URLs, API keys, ports) that should be set once at the project level and inherited by all apps, rather than duplicated per app. Sensitive values must not be stored in plaintext in the JSON state file.
+- **Alternatives considered**:
+  - **App-level only** — Requires duplicating shared config across every app. No single place to change a database URL.
+  - **External secret manager** (HashiCorp Vault, SOPS) — Too heavy for a single-user CLI tool in Phase 0.
+  - **Environment files** (`.env`) — Familiar but doesn't integrate with the state store or support encryption.
+- **Rationale**: Project-level env vars provide a single source of shared configuration. The merge semantics (project env is base, app env overrides) match industry conventions (Heroku, Fly.io, Railway). AES-256-GCM with a local master key (`~/.goship/master.key`, `0o600`) is proportionate security for a single-user tool — secrets are encrypted at rest in the state file, decrypted only at deploy time or with `--show-values`. The `encrypted:` prefix makes it visible which values are secrets without needing a separate metadata field.
+- **Status**: Accepted
+
+### ADR-038: Deploy-time env injection (not live push)
+
+- **Decision**: Inject environment variables into apps at deploy time (`app deploy` / `compose up`), not push them to running VMs when `env set` is called.
+- **Context**: After `env set`, should the change take effect immediately on running apps or only on next deploy?
+- **Alternatives considered**: Live push — send env update over virtio-serial and restart affected containers/processes immediately.
+- **Rationale**: Deploy-time injection is simpler, predictable, and matches the declarative model: desired state is defined, then applied explicitly. Live push would require tracking which apps use which env vars, coordinating restarts, and handling partial failures. The trade-off (requiring a redeploy) is acceptable and explicit — users know exactly when config changes take effect.
+- **Status**: Accepted
+
+---
+
 ## Summary of Superseded Decisions
 
 | Original | Superseded by | What changed |

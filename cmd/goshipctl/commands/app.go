@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -21,6 +22,7 @@ import (
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 	"github.com/guilhermebr/goship/internal/compose"
 	"github.com/guilhermebr/goship/internal/shared/size"
+	"github.com/guilhermebr/goship/internal/vault"
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -486,6 +488,11 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Merge project-level env vars as base, app env overrides.
+	if err := mergeProjectEnv(project.Env, app); err != nil {
+		return err
+	}
+
 	printVerbose("Deploying app '%s' to project '%s'...", appName, projectName)
 
 	if err := rt.DeployApp(ctx, instance.ID, app); err != nil {
@@ -550,7 +557,7 @@ func runAppList(cmd *cobra.Command, args []string) error {
 	return w.Flush()
 }
 
-//nolint:funlen // CLI handler with detailed app info display
+//nolint:funlen,gocognit // CLI handler with detailed app info display
 func runAppInfo(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
 
@@ -590,7 +597,11 @@ func runAppInfo(cmd *cobra.Command, args []string) error {
 
 	if len(app.Env) > 0 {
 		fmt.Fprint(out, "  Env:\n")
-		for k, v := range app.Env {
+		for _, k := range slices.Sorted(maps.Keys(app.Env)) {
+			v := app.Env[k]
+			if vault.IsEncrypted(v) {
+				v = maskedValue
+			}
 			fmt.Fprintf(out, "    %s=%s\n", k, v)
 		}
 	}

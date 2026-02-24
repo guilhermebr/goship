@@ -143,6 +143,13 @@ func runComposeUp(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Merge project-level env vars into each app (project env is the base, app env overrides).
+	for i := range apps {
+		if err := mergeProjectEnv(project.Env, &apps[i]); err != nil {
+			return err
+		}
+	}
+
 	fmt.Fprintf(out, "Deploying %d service(s) to project '%s'...\n\n", len(apps), projectName)
 
 	var deployed int

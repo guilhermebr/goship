@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -19,6 +21,7 @@ import (
 
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 	"github.com/guilhermebr/goship/internal/shared/size"
+	"github.com/guilhermebr/goship/internal/vault"
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -334,6 +337,18 @@ func runProjectInfo(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(out, "  Memory:   %d MB\n", project.Resources.MemoryMB)
 	fmt.Fprintf(out, "  Disk:     %d MB\n", project.Resources.DiskMB)
 	fmt.Fprintf(out, "  Created:  %s\n", project.CreatedAt.Format(time.RFC3339))
+
+	// Show environment variables.
+	if len(project.Env) > 0 {
+		fmt.Fprint(out, "\nEnvironment:\n")
+		for _, k := range slices.Sorted(maps.Keys(project.Env)) {
+			v := project.Env[k]
+			if vault.IsEncrypted(v) {
+				v = maskedValue
+			}
+			fmt.Fprintf(out, "  %s=%s\n", k, v)
+		}
+	}
 
 	// Show instance info if available.
 	instance := store.GetInstance(project.ID)

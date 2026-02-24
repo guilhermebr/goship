@@ -81,6 +81,7 @@ GoShip is built around a simple model:
 - **KVM/TCG fallback** — Automatic detection of KVM; graceful fallback to QEMU software emulation
 - **Auto network setup** — Ensures the libvirt `default` network is active before VM creation
 - **DAC security labels** — Numeric UID/GID labels for precise QEMU file access control
+- **Environment variables** — Project-level env vars inherited by all apps, with AES-256-GCM vault encryption for secrets
 
 ---
 
@@ -115,7 +116,12 @@ goshipctl image pull
 # Create a project (provisions a VM with Docker)
 goshipctl project create myapp --cpu 1 --memory 512
 
-# Deploy a container app
+# Set project-level environment variables (inherited by all apps)
+goshipctl env set myapp APP_ENV=production LOG_LEVEL=info
+goshipctl env set myapp DB_PASSWORD=s3cret --secret
+goshipctl env list myapp
+
+# Deploy a container app (inherits project env vars)
 goshipctl app create myapp web --image nginx:alpine --port 8080:80
 goshipctl app deploy myapp web
 
@@ -166,7 +172,7 @@ See the [Getting Started guide](docs/getting-started.md) for the full walkthroug
 | [CLI Reference](docs/cli-reference.md) | Every command, flag, and example |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
 | [Design Document](docs/DESIGN.md) | Full architecture RFC |
-| [Decision Log](DECISION-LOG.md) | Architectural decisions and their rationale (ADR-001 through ADR-036) |
+| [Decision Log](DECISION-LOG.md) | Architectural decisions and their rationale |
 
 ---
 
