@@ -55,7 +55,7 @@ func init() {
 	composeCmd.AddCommand(composePsCmd)
 }
 
-//nolint:funlen,gocognit,gocyclo,cyclop,nestif,revive // Complex CLI handler
+//nolint:funlen,gocognit,gocyclo,cyclop,nestif // Complex CLI handler
 func runComposeUp(cmd *cobra.Command, args []string) error {
 	projectName := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

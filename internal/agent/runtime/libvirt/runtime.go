@@ -230,7 +230,7 @@ func (r *Runtime) LoadInstance(instance *entities.ProjectInstance) {
 // waitReady polls the VM until it boots and the goship-init agent responds.
 // It sends a ping first, then streams cloud-init logs while waiting for status.
 //
-//nolint:funlen,gocognit,gocyclo,cyclop,revive // VM boot polling requires multiple sequential checks
+//nolint:funlen,gocognit,gocyclo,cyclop // VM boot polling requires multiple sequential checks
 func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]

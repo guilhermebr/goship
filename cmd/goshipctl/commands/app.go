@@ -279,7 +279,7 @@ func printAppCreated(out io.Writer, app *entities.AppSpec, projectName string) {
 	fmt.Fprintf(out, "\nUse 'goshipctl app deploy %s %s' to start it.\n", projectName, app.Name)
 }
 
-//nolint:funlen,gocognit,gocyclo,cyclop,revive // CLI handler with complex flag parsing and validation
+//nolint:funlen,gocognit,gocyclo,cyclop // CLI handler with complex flag parsing and validation
 func runAppEdit(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
 
@@ -384,7 +384,7 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-//nolint:funlen,gocognit,gocyclo,cyclop,nestif,revive // CLI handler with complex deployment logic and binary upload
+//nolint:funlen,gocognit,gocyclo,cyclop,nestif // CLI handler with complex deployment logic and binary upload
 func runAppDeploy(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

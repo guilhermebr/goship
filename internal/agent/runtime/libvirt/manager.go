@@ -117,7 +117,7 @@ func diskPath(dataDir, name string) string {
 // Create orchestrates full VM creation: verifies the base image, creates the
 // CoW disk, generates domain XML, and defines+starts the VM via libvirt.
 //
-//nolint:funlen,gocognit,gocyclo,cyclop,revive // VM creation requires sequential validation steps
+//nolint:funlen,gocognit,gocyclo,cyclop // VM creation requires sequential validation steps
 func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 	// Verify base image exists.
 	if _, err := os.Stat(opts.BaseImage); os.IsNotExist(err) {

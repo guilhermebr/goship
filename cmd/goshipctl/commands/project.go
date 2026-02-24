@@ -751,7 +751,7 @@ start:
 
 const updateInitChunkSize = 512 * 1024 // 512KB
 
-//nolint:funlen,gocognit,revive // CLI handler with multi-phase chunked binary transfer
+//nolint:funlen,gocognit // CLI handler with multi-phase chunked binary transfer
 func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

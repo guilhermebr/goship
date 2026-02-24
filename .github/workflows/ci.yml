@@ -15,7 +15,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.26"
 
       - name: Install libvirt-dev
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
@@ -31,7 +31,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.26"
 
       - name: Install libvirt-dev
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
@@ -42,7 +42,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1
+          version: v2.10.1
 
   build:
     name: Build
@@ -52,7 +52,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.26"
 
       - name: Install libvirt-dev
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev

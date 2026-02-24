@@ -1,6 +1,6 @@
 module github.com/guilhermebr/goship
 
-go 1.24.0
+go 1.26.0
 
 require (
 	github.com/containerd/errdefs v1.0.0
@@ -8,6 +8,7 @@ require (
 	github.com/docker/go-connections v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.8.1
+	gopkg.in/yaml.v3 v3.0.1
 	libvirt.org/go/libvirt v1.10008.0
 )
 
@@ -38,6 +39,5 @@ require (
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )

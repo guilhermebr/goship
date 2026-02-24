@@ -122,8 +122,7 @@ linters:
         - name: banned-characters
           disabled: true
         - name: cognitive-complexity
-          arguments:
-            - 25
+          disabled: true
         - name: comment-spacings
           arguments:
             - nolint
@@ -183,6 +182,11 @@ linters:
       - linters:
           - revive
         text: "package-directory-mismatch"
+      # runtime package: name conflicts with stdlib, Runtime* prefix is intentional for clarity
+      - linters:
+          - revive
+        path: internal/agent/runtime/runtime\.go
+        text: "var-naming|exported"
 
 issues:
   max-issues-per-linter: 0

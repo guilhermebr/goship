@@ -84,7 +84,7 @@ func (m *DockerManager) LoadImage(ctx context.Context, reader io.Reader) error {
 
 // Deploy deploys a container for the given app spec.
 //
-//nolint:funlen,gocognit,revive // Container deployment requires multiple configuration steps
+//nolint:funlen,gocognit // Container deployment requires multiple configuration steps
 func (m *DockerManager) Deploy(ctx context.Context, app *entities.AppSpec) error {
 	// Build full image reference.
 	imageRef := app.Image
@@ -232,7 +232,7 @@ func (m *DockerManager) Remove(ctx context.Context, appName string) error {
 
 // GetStatus returns the status of all GoShip-managed containers.
 //
-//nolint:gocognit,nestif,revive // Container status extraction requires parsing Docker API responses
+//nolint:gocognit,nestif // Container status extraction requires parsing Docker API responses
 func (m *DockerManager) GetStatus(ctx context.Context) ([]v1.AppStatus, error) {
 	containers, err := m.client.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {

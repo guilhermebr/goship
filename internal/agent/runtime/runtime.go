@@ -1,8 +1,6 @@
 // Package runtime defines the ProjectRuntime interface and related types.
 // This interface abstracts VM lifecycle management, allowing different
 // runtime backends (QEMU, Kata, Firecracker) to be plugged in.
-//
-//nolint:revive // Package name intentionally matches Go's runtime; types prefixed for clarity
 package runtime
 
 import (
@@ -94,16 +92,12 @@ type CapabilityProvider interface {
 }
 
 // RuntimeWithCapabilities combines ProjectRuntime with capability discovery.
-//
-//nolint:revive // Intentional naming for clarity in external packages
 type RuntimeWithCapabilities interface {
 	ProjectRuntime
 	CapabilityProvider
 }
 
 // RuntimeConfig contains configuration for a runtime backend.
-//
-//nolint:revive // Intentional naming for clarity in external packages
 type RuntimeConfig struct {
 	// DataDir is the directory for runtime data (images, state, etc.)
 	DataDir string
@@ -156,8 +150,6 @@ func DefaultConfig() *RuntimeConfig {
 }
 
 // RuntimeOption is a function that configures a RuntimeConfig.
-//
-//nolint:revive // Intentional naming for clarity in external packages
 type RuntimeOption func(*RuntimeConfig)
 
 // WithDataDir sets the data directory.

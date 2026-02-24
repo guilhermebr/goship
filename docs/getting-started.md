@@ -28,7 +28,7 @@ sudo systemctl enable --now libvirtd
 **Note:** GoShip works without KVM using QEMU TCG (software emulation), but performance will be significantly degraded. See [Troubleshooting — QEMU TCG Fallback](troubleshooting.md#qemu-tcg-fallback) for details.
 
 You also need:
-- **Go 1.22+** — to build GoShip from source
+- **Go 1.26+** — to build GoShip from source
 - **Docker** (optional) — only needed inside VMs for container mode; GoShip installs it automatically during VM provisioning
 
 ## Install GoShip
