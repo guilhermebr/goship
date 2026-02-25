@@ -230,6 +230,22 @@ func (i *Init) handleLogs(cmd *v1.InitCommand) *v1.InitResponse {
 		lines = DefaultLogLines
 	}
 
+	// If AppName is set, route through the executor (Docker API or process log file).
+	if cmd.AppName != "" {
+		content, err := i.executor.GetLogs(i.ctx, cmd.AppName, lines)
+		if err != nil {
+			return &v1.InitResponse{
+				Status: v1.StatusError,
+				Error:  fmt.Sprintf("failed to get app logs: %v", err),
+			}
+		}
+		return &v1.InitResponse{
+			Status: v1.StatusOK,
+			Logs:   content,
+		}
+	}
+
+	// Fall back to file-based log reading (project logs, cloud-init streaming).
 	logFile := cmd.LogFile
 	if logFile == "" {
 		logFile = DefaultLogFile

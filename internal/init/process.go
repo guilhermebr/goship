@@ -230,6 +230,11 @@ func (m *ProcessManager) GetStatus(ctx context.Context) ([]v1.AppStatus, error) 
 	return statuses, nil
 }
 
+// GetLogs retrieves the last N lines from the process log file.
+func (m *ProcessManager) GetLogs(_ context.Context, appName string, lines int) (string, error) {
+	return readLastNLines(processLogPath(appName), lines)
+}
+
 // Close stops all managed processes.
 func (m *ProcessManager) Close() error {
 	m.mu.Lock()

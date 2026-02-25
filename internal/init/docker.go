@@ -1,9 +1,11 @@
 package gsinit
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
@@ -228,6 +231,36 @@ func (m *DockerManager) Remove(ctx context.Context, appName string) error {
 		return fmt.Errorf("failed to remove container: %w", err)
 	}
 	return nil
+}
+
+// GetLogs retrieves logs from a Docker container by app name.
+func (m *DockerManager) GetLogs(ctx context.Context, appName string, lines int) (string, error) {
+	containerName := fmt.Sprintf("goship-%s", appName)
+
+	reader, err := m.client.ContainerLogs(ctx, containerName, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       strconv.Itoa(lines),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get container logs: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
+		return "", fmt.Errorf("failed to read container logs: %w", err)
+	}
+
+	// Combine stdout and stderr.
+	result := stdout.String()
+	if stderr.Len() > 0 {
+		if result != "" {
+			result += "\n"
+		}
+		result += stderr.String()
+	}
+	return result, nil
 }
 
 // GetStatus returns the status of all GoShip-managed containers.

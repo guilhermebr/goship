@@ -15,6 +15,7 @@ type AppExecutor interface {
 	Stop(ctx context.Context, appName string) error
 	Remove(ctx context.Context, appName string) error
 	GetStatus(ctx context.Context) ([]v1.AppStatus, error)
+	GetLogs(ctx context.Context, appName string, lines int) (string, error)
 	Close() error
 }
 
@@ -77,6 +78,20 @@ func (m *ExecutorManager) Remove(ctx context.Context, appName string) error {
 		_ = m.process.Remove(ctx, appName)
 	}
 	return nil
+}
+
+// GetLogs retrieves logs for an app. Tries docker first, falls back to process.
+func (m *ExecutorManager) GetLogs(ctx context.Context, appName string, lines int) (string, error) {
+	if m.docker != nil {
+		logs, err := m.docker.GetLogs(ctx, appName, lines)
+		if err == nil {
+			return logs, nil
+		}
+	}
+	if m.process != nil {
+		return m.process.GetLogs(ctx, appName, lines)
+	}
+	return "", errors.New("no executor available for logs")
 }
 
 // GetAllStatus returns the status of all apps from both executors.

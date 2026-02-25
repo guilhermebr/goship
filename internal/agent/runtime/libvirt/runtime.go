@@ -232,7 +232,7 @@ func (r *Runtime) LoadInstance(instance *entities.ProjectInstance) {
 // Set streamCloudInitLogs to true on first boot (create) when cloud-init runs,
 // and false on start/restart where the log contains stale content.
 //
-//nolint:funlen,gocognit,gocyclo,cyclop // VM boot polling requires multiple sequential checks
+//nolint:funlen,gocognit,gocyclo,cyclop,revive // boot polling with create-vs-restart flag
 func (r *Runtime) waitReady(ctx context.Context, instanceID string, streamCloudInitLogs bool) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
@@ -737,10 +737,9 @@ func (r *Runtime) GetAppLogs(ctx context.Context, instanceID string, appName str
 	}
 	defer func() { _ = comm.Close() }()
 
-	logFile := fmt.Sprintf("/var/log/goship-%s.log", appName)
 	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
 		Action:  v1.ActionLogs,
-		LogFile: logFile,
+		AppName: appName,
 		Lines:   lines,
 	})
 	if err != nil {

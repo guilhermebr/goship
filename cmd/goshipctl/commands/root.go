@@ -79,13 +79,20 @@ func init() {
 	rootCmd.AddCommand(envCmd)
 }
 
+const (
+	cmdProject = "project"
+	cmdApp     = "app"
+	cmdCompose = "compose"
+	cmdEnv     = "env"
+)
+
 // needsStore returns true if the command requires the state store.
 func needsStore(cmd *cobra.Command) bool {
 	parent := ""
 	if cmd.Parent() != nil {
 		parent = cmd.Parent().Name()
 	}
-	return parent == "project" || parent == "app" || parent == "compose" || parent == "env"
+	return parent == cmdProject || parent == cmdApp || parent == cmdCompose || parent == cmdEnv
 }
 
 // needsRuntime returns true if the command requires the libvirt runtime.
@@ -97,7 +104,7 @@ func needsRuntime(cmd *cobra.Command) bool {
 	name := cmd.Name()
 
 	// App subcommands that talk to the VM need the runtime.
-	if parent == "app" {
+	if parent == cmdApp {
 		switch name {
 		case "deploy", "stop", "delete", "logs", "push-image":
 			return true
@@ -105,7 +112,7 @@ func needsRuntime(cmd *cobra.Command) bool {
 	}
 
 	// Project subcommands that need the runtime for VM operations.
-	if parent == "project" {
+	if parent == cmdProject {
 		switch name {
 		case "create", "delete", "edit", "stop", "start", "restart", "update-init":
 			return true
@@ -113,7 +120,7 @@ func needsRuntime(cmd *cobra.Command) bool {
 	}
 
 	// Compose subcommands that need the runtime for VM operations.
-	if parent == "compose" {
+	if parent == cmdCompose {
 		switch name {
 		case "up", "down":
 			return true
@@ -132,7 +139,7 @@ func needsRuntimeOptional(cmd *cobra.Command) bool {
 	}
 	name := cmd.Name()
 
-	if parent == "project" {
+	if parent == cmdProject {
 		switch name {
 		case "list", "info":
 			return true
