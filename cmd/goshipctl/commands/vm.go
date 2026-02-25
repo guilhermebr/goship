@@ -113,7 +113,7 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --network-source flag: %w", err)
 	}
-	dataDir, err := cmd.Flags().GetString("data-dir")
+	vmDataDir, err := cmd.Flags().GetString("data-dir")
 	if err != nil {
 		return fmt.Errorf("invalid --data-dir flag: %w", err)
 	}
@@ -139,7 +139,7 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	baseImage = expandPath(baseImage)
-	dataDir = expandPath(dataDir)
+	vmDataDir = expandPath(vmDataDir)
 	initBinaryPath = expandPath(initBinaryPath)
 
 	if !skipGuestProvision {
@@ -162,7 +162,7 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 		sshKey = strings.TrimSpace(string(keyBytes))
 	}
 
-	mgr, cleanup, err := lvrt.NewVMManager(dataDir)
+	mgr, cleanup, err := lvrt.NewVMManager(vmDataDir)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func runVMCreate(cmd *cobra.Command, args []string) error {
 
 func runVMDestroy(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	dataDir, err := cmd.Flags().GetString("data-dir")
+	vmDataDir, err := cmd.Flags().GetString("data-dir")
 	if err != nil {
 		return fmt.Errorf("invalid --data-dir flag: %w", err)
 	}
@@ -210,9 +210,9 @@ func runVMDestroy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --keep-disk flag: %w", err)
 	}
 
-	dataDir = expandPath(dataDir)
+	vmDataDir = expandPath(vmDataDir)
 
-	mgr, cleanup, err := lvrt.NewVMManager(dataDir)
+	mgr, cleanup, err := lvrt.NewVMManager(vmDataDir)
 	if err != nil {
 		return err
 	}
@@ -268,13 +268,13 @@ func runVMList(cmd *cobra.Command, args []string) error {
 
 func runVMPing(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	dataDir, err := cmd.Flags().GetString("data-dir")
+	vmDataDir, err := cmd.Flags().GetString("data-dir")
 	if err != nil {
 		return fmt.Errorf("invalid --data-dir flag: %w", err)
 	}
-	dataDir = expandPath(dataDir)
+	vmDataDir = expandPath(vmDataDir)
 
-	socketPath := filepath.Join(dataDir, "vms", name, "goship.sock")
+	socketPath := filepath.Join(vmDataDir, "vms", name, "goship.sock")
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Pinging goship-init in VM %q...\n", name)
 
