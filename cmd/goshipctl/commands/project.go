@@ -683,7 +683,7 @@ func runProjectStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start VM: %w", err)
 	}
 
-	instance.State = entities.InstanceStateRunning
+	// Persist state set by waitReady inside StartInstance.
 	if err := store.UpdateInstance(instance); err != nil {
 		printError("failed to update instance state: %v", err)
 	}
@@ -694,6 +694,9 @@ func runProjectStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM started\n", name)
+	if instance.IPAddress != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "  IP: %s\n", instance.IPAddress)
+	}
 	return nil
 }
 
@@ -745,12 +748,12 @@ func runProjectRestart(cmd *cobra.Command, args []string) error {
 	}
 
 start:
-	// Start the VM.
+	// Start the VM (waitReady inside StartInstance sets state and IP).
 	if err := rt.StartInstance(ctx, instance.ID); err != nil {
 		return fmt.Errorf("failed to start VM: %w", err)
 	}
 
-	instance.State = entities.InstanceStateRunning
+	// Persist state set by waitReady inside StartInstance.
 	if err := store.UpdateInstance(instance); err != nil {
 		printError("failed to update instance state: %v", err)
 	}
@@ -761,6 +764,9 @@ start:
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM restarted\n", name)
+	if instance.IPAddress != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "  IP: %s\n", instance.IPAddress)
+	}
 	return nil
 }
 

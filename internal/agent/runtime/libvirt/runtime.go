@@ -195,7 +195,7 @@ func (r *Runtime) CreateInstance(ctx context.Context, project *entities.Project)
 	// Unlock while waiting so other goroutines can proceed, then re-lock
 	// before returning so the deferred Unlock is balanced.
 	r.mu.Unlock()
-	waitErr := r.waitReady(ctx, instanceID)
+	waitErr := r.waitReady(ctx, instanceID, true)
 	r.mu.Lock()
 
 	if waitErr != nil {
@@ -228,10 +228,12 @@ func (r *Runtime) LoadInstance(instance *entities.ProjectInstance) {
 }
 
 // waitReady polls the VM until it boots and the goship-init agent responds.
-// It sends a ping first, then streams cloud-init logs while waiting for status.
+// It sends a ping first, then optionally streams cloud-init logs while waiting for status.
+// Set streamCloudInitLogs to true on first boot (create) when cloud-init runs,
+// and false on start/restart where the log contains stale content.
 //
 //nolint:funlen,gocognit,gocyclo,cyclop // VM boot polling requires multiple sequential checks
-func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
+func (r *Runtime) waitReady(ctx context.Context, instanceID string, streamCloudInitLogs bool) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
 	r.mu.RUnlock()
@@ -296,24 +298,30 @@ func (r *Runtime) waitReady(ctx context.Context, instanceID string) error {
 
 		if !agentReady {
 			agentReady = true
-			progress("Agent connected, streaming cloud-init logs...")
+			if streamCloudInitLogs {
+				progress("Agent connected, streaming cloud-init logs...")
+			} else {
+				progress("Agent connected")
+			}
 		}
 
-		// Fetch cloud-init logs and print new lines.
-		logResp, err := comm.SendCommand(ctx, &v1.InitCommand{
-			Action:  v1.ActionLogs,
-			LogFile: "/var/log/cloud-init-output.log",
-		})
-		if err == nil && logResp.Status == v1.StatusOK && len(logResp.Logs) > logOffset {
-			newContent := logResp.Logs[logOffset:]
-			// Print each new line with a prefix.
-			lines := strings.SplitSeq(newContent, "\n")
-			for line := range lines {
-				if line != "" {
-					progress("  %s", line)
+		// Fetch cloud-init logs and print new lines (only on first boot).
+		if streamCloudInitLogs {
+			logResp, logErr := comm.SendCommand(ctx, &v1.InitCommand{
+				Action:  v1.ActionLogs,
+				LogFile: "/var/log/cloud-init-output.log",
+			})
+			if logErr == nil && logResp.Status == v1.StatusOK && len(logResp.Logs) > logOffset {
+				newContent := logResp.Logs[logOffset:]
+				// Print each new line with a prefix.
+				lines := strings.SplitSeq(newContent, "\n")
+				for line := range lines {
+					if line != "" {
+						progress("  %s", line)
+					}
 				}
+				logOffset = len(logResp.Logs)
 			}
-			logOffset = len(logResp.Logs)
 		}
 
 		// Send status to get VM info (IP, hostname).
@@ -391,7 +399,7 @@ func (r *Runtime) StopInstance(ctx context.Context, instanceID string) error {
 	return nil
 }
 
-// StartInstance starts a previously stopped VM instance.
+// StartInstance starts a previously stopped VM instance and waits for it to boot.
 func (r *Runtime) StartInstance(ctx context.Context, instanceID string) error {
 	r.mu.RLock()
 	info, ok := r.instances[instanceID]
@@ -416,9 +424,14 @@ func (r *Runtime) StartInstance(ctx context.Context, instanceID string) error {
 	}
 
 	r.mu.Lock()
-	info.instance.State = entities.InstanceStateRunning
+	info.instance.State = entities.InstanceStateStarting
 	info.instance.UpdatedAt = time.Now()
 	r.mu.Unlock()
+
+	// Wait for VM to boot and agent to respond (no cloud-init streaming on restart).
+	if err := r.waitReady(ctx, instanceID, false); err != nil {
+		return fmt.Errorf("VM failed to become ready: %w", err)
+	}
 
 	return nil
 }
