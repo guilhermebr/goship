@@ -436,7 +436,7 @@ func runProjectLogs(cmd *cobra.Command, args []string) error {
 
 	// Derive the socket path from the domain name.
 	vmName := strings.TrimPrefix(instance.DomainName, lvrt.DomainPrefix)
-	socketPath := filepath.Join(expandDataDir(dataDir), "vms", vmName, "goship.sock")
+	socketPath := filepath.Join(expandDataDir(cfg.DataDir), "vms", vmName, "goship.sock")
 
 	fetchLogs := func() (string, error) {
 		comm, commErr := lvrt.NewVMCommunicator(socketPath)
@@ -780,7 +780,7 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 	// Resolve binary path.
 	binaryPath := updateInitBinary
 	if binaryPath == "" {
-		binaryPath = initBinaryPath // global --goship-init flag
+		binaryPath = cfg.InitBinaryPath // global --goship-init flag
 	}
 	binaryPath = expandDataDir(binaryPath)
 
@@ -810,7 +810,7 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 
 	// Connect to VM via virtio-serial.
 	vmName := strings.TrimPrefix(instance.DomainName, lvrt.DomainPrefix)
-	socketPath := filepath.Join(expandDataDir(dataDir), "vms", vmName, "goship.sock")
+	socketPath := filepath.Join(expandDataDir(cfg.DataDir), "vms", vmName, "goship.sock")
 
 	comm, err := lvrt.NewVMCommunicator(socketPath)
 	if err != nil {

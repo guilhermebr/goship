@@ -220,7 +220,7 @@ func runEnvDelete(cmd *cobra.Command, args []string) error {
 
 // initVault creates a Vault instance using the master key from the data directory.
 func initVault() (*vault.Vault, error) {
-	dir := expandDataDir(dataDir)
+	dir := expandDataDir(cfg.DataDir)
 
 	key, err := vault.LoadOrCreateMasterKey(dir)
 	if err != nil {

@@ -44,7 +44,7 @@ func TestEnvSet_Secret(t *testing.T) {
 	setupTestState(t)
 
 	dir := t.TempDir()
-	dataDir = dir
+	cfg.DataDir = dir
 
 	_, _ = store.CreateProject("secproj", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
 
@@ -173,7 +173,7 @@ func TestEnvList_MasksSecrets(t *testing.T) {
 	setupTestState(t)
 
 	dir := t.TempDir()
-	dataDir = dir
+	cfg.DataDir = dir
 
 	v, _ := initVault()
 	encrypted, _ := v.Encrypt("s3cret")
@@ -206,7 +206,7 @@ func TestEnvList_ShowValues(t *testing.T) {
 	setupTestState(t)
 
 	dir := t.TempDir()
-	dataDir = dir
+	cfg.DataDir = dir
 
 	v, _ := initVault()
 	encrypted, _ := v.Encrypt("s3cret")
@@ -294,7 +294,7 @@ func TestEnvDelete_NoEnvSet(t *testing.T) {
 
 func TestDecryptProjectEnv_MixedPlainAndEncrypted(t *testing.T) {
 	dir := t.TempDir()
-	dataDir = dir
+	cfg.DataDir = dir
 
 	v, err := initVault()
 	if err != nil {
@@ -347,7 +347,7 @@ func TestDecryptProjectEnv_Empty(t *testing.T) {
 
 func TestMergeProjectEnv(t *testing.T) {
 	dir := t.TempDir()
-	dataDir = dir
+	cfg.DataDir = dir
 
 	v, _ := initVault()
 	encrypted, _ := v.Encrypt("db-secret")

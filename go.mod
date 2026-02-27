@@ -3,6 +3,7 @@ module github.com/guilhermebr/goship
 go 1.26.0
 
 require (
+	github.com/ardanlabs/conf/v3 v3.10.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0

@@ -1,7 +1,7 @@
 # GoShip Makefile
 
 .PHONY: all build clean test lint fmt vet tidy help install uninstall
-.PHONY: build-goshipctl build-goship-init release-local release-check setup
+.PHONY: build-goshipctl build-goshipd build-goship-init release-local release-check setup
 
 # Go parameters
 GOCMD=go
@@ -14,6 +14,7 @@ GOVET=$(GOCMD) vet
 
 # Binary names
 GOSHIPCTL=goshipctl
+GOSHIPD=goshipd
 GOSHIP_INIT=goship-init
 
 # Build directories
@@ -48,6 +49,12 @@ build-goshipctl:
 	@echo "Building $(GOSHIPCTL)..."
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIPCTL) ./$(CMD_DIR)/$(GOSHIPCTL)
+
+# Build goshipd API server (static binary, no libvirt bindings)
+build-goshipd:
+	@echo "Building $(GOSHIPD) (static)..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(GOSHIPD) ./$(CMD_DIR)/$(GOSHIPD)
 
 # Build goship-init (static binary for use inside VMs)
 build-goship-init:
@@ -128,6 +135,7 @@ help:
 	@echo "  all              - Build all binaries (default)"
 	@echo "  build            - Build all binaries"
 	@echo "  build-goshipctl  - Build goshipctl CLI"
+	@echo "  build-goshipd    - Build goshipd API server (static)"
 	@echo "  build-goship-init - Build goship-init (static, for VMs)"
 	@echo "  test             - Run tests"
 	@echo "  test-coverage    - Run tests with coverage"

@@ -2,6 +2,8 @@ github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEK
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/Microsoft/go-winio v0.4.21 h1:+6mVbXh4wPzUrl1COX9A+ZCvEpYsOBZ6/+kwDnvLyro=
 github.com/Microsoft/go-winio v0.4.21/go.mod h1:JPGBdM1cNvN/6ISo+n8V5iA4v8pBzdOpzfwIujj1a84=
+github.com/ardanlabs/conf/v3 v3.10.0 h1:qIrJ/WBmH/hFQ/IX4xH9LX9LzwK44T9aEOy78M+4S+0=
+github.com/ardanlabs/conf/v3 v3.10.0/go.mod h1:XlL9P0quWP4m1weOVFmlezabinbZLI05niDof/+Ochk=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

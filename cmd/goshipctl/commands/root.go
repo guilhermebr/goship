@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/ardanlabs/conf/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/guilhermebr/goship/internal/agent/runtime"
@@ -20,14 +21,10 @@ var (
 	buildTime = "unknown"
 )
 
-var (
-	// Global flags
-	dataDir            string
-	verbose            bool
-	initBinaryPath     string
-	skipGuestProvision bool
-	installDocker      bool
+// cfg holds parsed configuration (env vars → struct defaults, then CLI flags override).
+var cfg Config
 
+var (
 	// Shared resources (initialized lazily by PersistentPreRunE)
 	store *state.Store
 	rt    *libvirt.Runtime
@@ -59,14 +56,25 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "~/.goship", "Data directory for GoShip")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", true, "Enable verbose output")
+	// Parse environment variables into cfg (ignores unknown flags at this stage).
+	// Errors are intentionally swallowed — CLI flags below provide final defaults.
+	_, _ = conf.Parse("GOSHIP", &cfg)
+
+	// Register CLI flags bound to cfg fields. The current cfg value (from env
+	// or struct default) becomes the Cobra default so env vars take effect.
 	rootCmd.PersistentFlags().
-		StringVar(&initBinaryPath, "goship-init", "~/.goship/bin/goship-init", "Path to goship-init binary")
+		StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "Data directory for GoShip (env: GOSHIP_DATA_DIR)")
 	rootCmd.PersistentFlags().
-		BoolVar(&skipGuestProvision, "skip-guest-provision", false, "Skip guest disk provisioning")
+		BoolVarP(&cfg.Verbose, "verbose", "v", cfg.Verbose, "Enable verbose output (env: GOSHIP_VERBOSE)")
 	rootCmd.PersistentFlags().
-		BoolVar(&installDocker, "install-docker", true, "Install Docker during guest provisioning")
+		StringVar(&cfg.InitBinaryPath, "goship-init", cfg.InitBinaryPath,
+			"Path to goship-init binary (env: GOSHIP_INIT_BINARY)")
+	rootCmd.PersistentFlags().
+		BoolVar(&cfg.SkipGuestProvision, "skip-guest-provision", cfg.SkipGuestProvision,
+			"Skip guest disk provisioning (env: GOSHIP_SKIP_GUEST_PROVISION)")
+	rootCmd.PersistentFlags().
+		BoolVar(&cfg.InstallDocker, "install-docker", cfg.InstallDocker,
+			"Install Docker during guest provisioning (env: GOSHIP_INSTALL_DOCKER)")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
@@ -156,7 +164,7 @@ func initResources(cmd *cobra.Command, args []string) error {
 	}
 
 	var err error
-	store, err = state.NewStore(dataDir)
+	store, err = state.NewStore(cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize state store: %w", err)
 	}
@@ -169,19 +177,33 @@ func initResources(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := []runtime.RuntimeOption{
-		runtime.WithDataDir(dataDir),
-		runtime.WithVMImage(dataDir + "/images/goship-vm.qcow2"),
-		runtime.WithInitBinary(initBinaryPath),
-		runtime.WithProvisionGuest(!skipGuestProvision),
-		runtime.WithInstallDocker(installDocker),
+		runtime.WithDataDir(cfg.DataDir),
+		runtime.WithVMImage(cfg.DataDir + "/images/goship-vm.qcow2"),
+		runtime.WithInitBinary(cfg.InitBinaryPath),
+		runtime.WithProvisionGuest(!cfg.SkipGuestProvision),
+		runtime.WithInstallDocker(cfg.InstallDocker),
 		runtime.WithProgressWriter(os.Stdout),
 	}
-	if projectNetworkType != "" {
-		source := projectNetworkSource
-		if projectNetworkType == "network" && source == "" {
-			source = "default"
+
+	// Resolve network: per-project flags take precedence, then global config.
+	netType := projectNetworkType
+	if netType == "" {
+		netType = cfg.NetworkType
+	}
+	netSource := projectNetworkSource
+	if netSource == "" {
+		netSource = cfg.NetworkSource
+	}
+
+	if netType != "" {
+		if netType == "network" && netSource == "" {
+			netSource = "default"
 		}
-		opts = append(opts, runtime.WithNetwork(projectNetworkType, source))
+		opts = append(opts, runtime.WithNetwork(netType, netSource))
+	}
+
+	if cfg.LibvirtURI != "" {
+		opts = append(opts, runtime.WithLibvirtURI(cfg.LibvirtURI))
 	}
 
 	rt, err = libvirt.New(opts...)
@@ -274,7 +296,7 @@ func cleanupResources(cmd *cobra.Command, args []string) error {
 
 // printVerbose prints a message if verbose mode is enabled.
 func printVerbose(format string, args ...any) {
-	if verbose {
+	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}
 }
