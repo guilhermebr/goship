@@ -12,6 +12,11 @@ const (
 	// defaultResolvConf is injected into the guest during provisioning to avoid
 	// DNS issues in environments where host resolv.conf points to local stubs.
 	defaultResolvConf = "nameserver 8.8.8.8\nnameserver 1.1.1.1\n"
+
+	// autologinScript is a BusyBox-compatible helper that forces login as the
+	// goship user without a password prompt. Used by getty -n -l on ttyS0.
+	autologinScript        = "/usr/local/bin/autologin"
+	autologinScriptContent = "#!/bin/sh\nexec /bin/login -f goship\n"
 )
 
 // openrcServiceScript is installed inside the VM and enabled on boot.
@@ -123,6 +128,14 @@ func buildVirtCustomizeArgs(opts GuestProvisionOptions, serviceScriptPath, resol
 		"--chmod", "0755:/etc/init.d/goship-init",
 		"--run-command", "rc-update add goship-init default",
 		"--upload", resolvPath + ":/etc/resolv.conf",
+		// Auto-login on serial console (ttyS0) for the goship user so
+		// `goshipctl project console` drops directly into a shell.
+		// BusyBox getty uses -n (no login prompt) + -l (custom login program).
+		"--write", autologinScript + ":" + autologinScriptContent,
+		"--chmod", "0755:" + autologinScript,
+		"--run-command", "sed -i '/^#*ttyS0/d' /etc/inittab" +
+			" && echo 'ttyS0::respawn:/sbin/getty -n -l " +
+			autologinScript + " 115200 ttyS0 vt100' >> /etc/inittab",
 	}
 
 	return args
