@@ -80,6 +80,10 @@ type ProjectRuntime interface {
 	// ResizeInstance updates the VM definition with new resource values from the project.
 	// The VM must be stopped before calling this method.
 	ResizeInstance(ctx context.Context, instanceID string, project *entities.Project) error
+
+	// LoadInstance registers a persisted instance into the runtime's in-memory state.
+	// This is needed when a runtime starts fresh and must recover previously created instances.
+	LoadInstance(instance *entities.ProjectInstance)
 }
 
 // CapabilityProvider defines methods for discovering host capabilities.

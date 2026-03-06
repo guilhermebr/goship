@@ -178,7 +178,7 @@ linters:
       - linters:
           - gosec
         text: "G703|G705|G706"
-      # Package name "gsinit" intentionally differs from dir "init" (reserved keyword)
+      # Package names intentionally differ from dir: "gsinit" (reserved keyword), "apiserver" (meaningful name)
       - linters:
           - revive
         text: "package-directory-mismatch"

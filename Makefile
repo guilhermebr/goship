@@ -42,7 +42,7 @@ setup:
 all: build
 
 # Build all binaries
-build: build-goshipctl build-goship-init
+build: build-goshipctl build-goshipd build-goship-init
 
 # Build goshipctl CLI
 build-goshipctl:
@@ -50,11 +50,11 @@ build-goshipctl:
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIPCTL) ./$(CMD_DIR)/$(GOSHIPCTL)
 
-# Build goshipd API server (static binary, no libvirt bindings)
+# Build goshipd API server (requires libvirt)
 build-goshipd:
-	@echo "Building $(GOSHIPD) (static)..."
+	@echo "Building $(GOSHIPD)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(GOSHIPD) ./$(CMD_DIR)/$(GOSHIPD)
+	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIPD) ./$(CMD_DIR)/$(GOSHIPD)
 
 # Build goship-init (static binary for use inside VMs)
 build-goship-init:
@@ -135,7 +135,7 @@ help:
 	@echo "  all              - Build all binaries (default)"
 	@echo "  build            - Build all binaries"
 	@echo "  build-goshipctl  - Build goshipctl CLI"
-	@echo "  build-goshipd    - Build goshipd API server (static)"
+	@echo "  build-goshipd    - Build goshipd API server (requires libvirt)"
 	@echo "  build-goship-init - Build goship-init (static, for VMs)"
 	@echo "  test             - Run tests"
 	@echo "  test-coverage    - Run tests with coverage"
