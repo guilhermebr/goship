@@ -44,6 +44,7 @@ func (s *Server) handleAppList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apps := s.store.GetApps(project.ID)
+	s.logger.Printf("apps listed: project=%s count=%d", project.Name, len(apps))
 	writeJSON(w, http.StatusOK, apps)
 }
 
@@ -119,6 +120,7 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("app created: project=%s app=%s mode=%s", project.Name, app.Name, app.ExecutionMode)
 	writeJSON(w, http.StatusCreated, app)
 }
 
@@ -138,6 +140,7 @@ func (s *Server) handleAppGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("app info: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, app)
 }
 
@@ -198,6 +201,7 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("app deployed: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, app)
 }
 
@@ -236,6 +240,7 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("app stopped: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
@@ -275,6 +280,7 @@ func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("app deleted: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -322,5 +328,6 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("app logs: project=%s app=%s lines=%d", project.Name, name, lines)
 	writeJSON(w, http.StatusOK, AppLogsResponse{Logs: strings.TrimRight(logs, "\n")})
 }

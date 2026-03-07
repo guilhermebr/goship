@@ -88,6 +88,10 @@ func (s *Server) logMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next(rec, r)
-		s.logger.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start))
+		path := r.URL.Path
+		if r.URL.RawQuery != "" {
+			path = path + "?" + r.URL.RawQuery
+		}
+		s.logger.Printf("%s %s %s %d %s", r.RemoteAddr, r.Method, path, rec.status, time.Since(start))
 	}
 }

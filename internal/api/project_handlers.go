@@ -26,6 +26,7 @@ type ProjectResponse struct {
 
 func (s *Server) handleProjectList(w http.ResponseWriter, _ *http.Request) {
 	projects := s.store.ListProjects()
+	s.logger.Printf("projects listed: count=%d", len(projects))
 	writeJSON(w, http.StatusOK, projects)
 }
 
@@ -74,6 +75,8 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("failed to save instance: %v", err)
 	}
 
+	s.logger.Printf("project created: name=%s id=%s", project.Name, project.ID)
+
 	resp := ProjectResponse{
 		Project:  project,
 		Instance: instance,
@@ -89,6 +92,8 @@ func (s *Server) handleProjectGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
 		return
 	}
+
+	s.logger.Printf("project info: name=%s id=%s", project.Name, project.ID)
 
 	resp := ProjectResponse{
 		Project:  project,
@@ -130,6 +135,7 @@ func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Printf("project deleted: name=%s id=%s", project.Name, project.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -172,6 +178,7 @@ func (s *Server) handleProjectStop(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("failed to update project state: %v", err)
 	}
 
+	s.logger.Printf("project stopped: name=%s id=%s", project.Name, project.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
@@ -212,6 +219,8 @@ func (s *Server) handleProjectStart(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateProject(project); err != nil {
 		s.logger.Printf("failed to update project state: %v", err)
 	}
+
+	s.logger.Printf("project started: name=%s id=%s", project.Name, project.ID)
 
 	resp := ProjectResponse{
 		Project:  project,
