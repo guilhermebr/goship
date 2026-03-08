@@ -2,14 +2,16 @@ package commands
 
 // Config holds the CLI configuration. Defaults can be overridden by
 // environment variables (prefix GOSHIP_) and CLI flags, in that order.
+// Environment variable names are derived automatically from the prefix
+// and field name (e.g. DataDir -> GOSHIP_DATA_DIR).
 type Config struct {
-	DataDir            string `conf:"default:~/.goship,env:GOSHIP_DATA_DIR"`
-	Verbose            bool   `conf:"default:true,env:GOSHIP_VERBOSE"`
-	InitBinaryPath     string `conf:"default:~/.goship/bin/goship-init,env:GOSHIP_INIT_BINARY"`
-	SkipGuestProvision bool   `conf:"default:false,env:GOSHIP_SKIP_GUEST_PROVISION"`
-	InstallDocker      bool   `conf:"default:true,env:GOSHIP_INSTALL_DOCKER"`
-	LibvirtURI         string `conf:"default:qemu:///system,env:GOSHIP_LIBVIRT_URI"`
-	NetworkType        string `conf:"default:,env:GOSHIP_NETWORK_TYPE"`
-	NetworkSource      string `conf:"default:,env:GOSHIP_NETWORK_SOURCE"`
-	APIURL             string `conf:"default:,env:GOSHIP_API_URL"`
+	DataDir            string `conf:"default:~/.goship"`
+	Verbose            bool   `conf:"default:true"`
+	InitBinaryPath     string `conf:"default:~/.goship/bin/goship-init"`
+	SkipGuestProvision bool   `conf:"default:false"`
+	InstallDocker      bool   `conf:"default:true"`
+	LibvirtURI         string `conf:"default:qemu:///system"`
+	NetworkType        string
+	NetworkSource      string
+	ApiUrl             string //nolint:revive // APIURL would derive env var GOSHIP_APIURL instead of GOSHIP_API_URL
 }

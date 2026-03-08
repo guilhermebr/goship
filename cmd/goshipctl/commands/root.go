@@ -11,6 +11,7 @@ import (
 
 	"github.com/guilhermebr/goship/internal/agent/runtime"
 	"github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	"github.com/guilhermebr/goship/internal/client"
 	"github.com/guilhermebr/goship/internal/shared/state"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -26,8 +27,9 @@ var cfg Config
 
 var (
 	// Shared resources (initialized lazily by PersistentPreRunE)
-	store *state.Store
-	rt    *libvirt.Runtime
+	store     *state.Store
+	rt        *libvirt.Runtime
+	apiClient *client.Client
 )
 
 // SetVersion sets the version information from ldflags.
@@ -68,13 +70,16 @@ func init() {
 		BoolVarP(&cfg.Verbose, "verbose", "v", cfg.Verbose, "Enable verbose output (env: GOSHIP_VERBOSE)")
 	rootCmd.PersistentFlags().
 		StringVar(&cfg.InitBinaryPath, "goship-init", cfg.InitBinaryPath,
-			"Path to goship-init binary (env: GOSHIP_INIT_BINARY)")
+			"Path to goship-init binary (env: GOSHIP_INIT_BINARY_PATH)")
 	rootCmd.PersistentFlags().
 		BoolVar(&cfg.SkipGuestProvision, "skip-guest-provision", cfg.SkipGuestProvision,
 			"Skip guest disk provisioning (env: GOSHIP_SKIP_GUEST_PROVISION)")
 	rootCmd.PersistentFlags().
 		BoolVar(&cfg.InstallDocker, "install-docker", cfg.InstallDocker,
 			"Install Docker during guest provisioning (env: GOSHIP_INSTALL_DOCKER)")
+	rootCmd.PersistentFlags().
+		StringVar(&cfg.ApiUrl, "api-url", cfg.ApiUrl,
+			"GoShip API server URL (env: GOSHIP_API_URL)")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
@@ -160,6 +165,12 @@ func needsRuntimeOptional(cmd *cobra.Command) bool {
 // initResources initializes shared resources based on command needs.
 func initResources(cmd *cobra.Command, args []string) error {
 	if !needsStore(cmd) {
+		return nil
+	}
+
+	// API mode: use HTTP client instead of local store/runtime.
+	if cfg.ApiUrl != "" {
+		apiClient = client.New(cfg.ApiUrl)
 		return nil
 	}
 

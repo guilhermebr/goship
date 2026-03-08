@@ -60,6 +60,10 @@ func init() {
 }
 
 func runEnvSet(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("env commands are not available in API mode")
+	}
+
 	projectName := args[0]
 	kvPairs := args[1:]
 
@@ -124,6 +128,10 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("env commands are not available in API mode")
+	}
+
 	projectName := args[0]
 
 	project, err := store.GetProject(projectName)
@@ -179,6 +187,10 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvDelete(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("env commands are not available in API mode")
+	}
+
 	projectName := args[0]
 	keys := args[1:]
 

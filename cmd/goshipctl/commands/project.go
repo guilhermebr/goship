@@ -193,10 +193,6 @@ func init() {
 
 func runProjectCreate(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	printVerbose("Creating project: %s", name)
 
 	memoryMB, err := size.ParseSizeMB(projectMemory)
 	if err != nil {
@@ -213,6 +209,15 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 		MemoryMB: memoryMB,
 		DiskMB:   diskMB,
 	}
+
+	if apiClient != nil {
+		return runProjectCreateAPI(cmd, name, resources)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	printVerbose("Creating project: %s", name)
 
 	// Create project in state store.
 	project, err := store.CreateProject(name, entities.RuntimeQEMU, resources)
@@ -251,8 +256,65 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runProjectCreateAPI(cmd *cobra.Command, name string, resources entities.Resources) error {
+	resp, err := apiClient.CreateProject(name, resources)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Project '%s' created successfully\n", name)
+	fmt.Fprintf(out, "  ID:       %s\n", resp.ID)
+	fmt.Fprintf(out, "  State:    %s\n", resp.State)
+	if resp.Instance != nil {
+		fmt.Fprintf(out, "  VM State: %s\n", resp.Instance.State)
+		if resp.Instance.IPAddress != "" {
+			fmt.Fprintf(out, "  IP:       %s\n", resp.Instance.IPAddress)
+		}
+	}
+	return nil
+}
+
 func runProjectList(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return runProjectListAPI(cmd)
+	}
+
 	projects := store.ListProjects()
+
+	if len(projects) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No projects found.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tID\tSTATE\tRUNTIME\tCPU\tMEMORY\tCREATED")
+
+	const shortIDLen = 8
+	for _, p := range projects {
+		shortID := p.ID
+		if len(shortID) > shortIDLen {
+			shortID = shortID[:shortIDLen]
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.0f\t%dMB\t%s\n",
+			p.Name,
+			shortID,
+			p.State,
+			p.Runtime,
+			p.Resources.CPU,
+			p.Resources.MemoryMB,
+			p.CreatedAt.Format("2006-01-02 15:04"),
+		)
+	}
+
+	return w.Flush()
+}
+
+func runProjectListAPI(cmd *cobra.Command) error {
+	projects, err := apiClient.ListProjects()
+	if err != nil {
+		return err
+	}
 
 	if len(projects) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No projects found.")
@@ -284,6 +346,15 @@ func runProjectList(cmd *cobra.Command, args []string) error {
 
 func runProjectDelete(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	if apiClient != nil {
+		if err := apiClient.DeleteProject(name); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' deleted successfully\n", name)
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -322,6 +393,10 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 
 func runProjectInfo(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	if apiClient != nil {
+		return runProjectInfoAPI(cmd, name)
+	}
 
 	project, err := store.GetProject(name)
 	if err != nil {
@@ -380,7 +455,50 @@ func runProjectInfo(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runProjectInfoAPI(cmd *cobra.Command, name string) error {
+	resp, err := apiClient.GetProject(name)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Project: %s\n", resp.Name)
+	fmt.Fprintf(out, "  ID:       %s\n", resp.ID)
+	fmt.Fprintf(out, "  State:    %s\n", resp.State)
+	fmt.Fprintf(out, "  Runtime:  %s\n", resp.Runtime)
+	fmt.Fprintf(out, "  CPU:      %.0f cores\n", resp.Resources.CPU)
+	fmt.Fprintf(out, "  Memory:   %d MB\n", resp.Resources.MemoryMB)
+	fmt.Fprintf(out, "  Disk:     %d MB\n", resp.Resources.DiskMB)
+	fmt.Fprintf(out, "  Created:  %s\n", resp.CreatedAt.Format(time.RFC3339))
+
+	if resp.Instance != nil {
+		fmt.Fprint(out, "\nVM Instance:\n")
+		fmt.Fprintf(out, "  ID:       %s\n", resp.Instance.ID)
+		fmt.Fprintf(out, "  State:    %s\n", resp.Instance.State)
+		if resp.Instance.IPAddress != "" {
+			fmt.Fprintf(out, "  IP:       %s\n", resp.Instance.IPAddress)
+		}
+	}
+
+	if len(resp.Apps) > 0 {
+		fmt.Fprint(out, "\nApps:\n")
+		for _, app := range resp.Apps {
+			if app.IsContainerMode() {
+				fmt.Fprintf(out, "  - %s (image: %s)\n", app.Name, app.Image)
+			} else {
+				fmt.Fprintf(out, "  - %s (binary: %s)\n", app.Name, app.Binary)
+			}
+		}
+	}
+
+	return nil
+}
+
 func runProjectConsole(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("project console is not available in API mode")
+	}
+
 	name := args[0]
 
 	project, err := store.GetProject(name)
@@ -411,6 +529,10 @@ func runProjectConsole(cmd *cobra.Command, args []string) error {
 
 //nolint:funlen // CLI handler with streaming logs and polling logic
 func runProjectLogs(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("project logs is not available in API mode")
+	}
+
 	name := args[0]
 
 	// Resolve log file: --file flag > positional alias > default (empty = agent default).
@@ -503,6 +625,10 @@ func expandDataDir(dir string) string {
 
 //nolint:funlen // CLI handler with complex flag parsing and VM reconfiguration
 func runProjectEdit(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("project edit is not available in API mode")
+	}
+
 	name := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -586,6 +712,15 @@ func runProjectEdit(cmd *cobra.Command, args []string) error {
 
 func runProjectStop(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	if apiClient != nil {
+		if err := apiClient.StopProject(name); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM stopped\n", name)
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -651,6 +786,19 @@ func runProjectStop(cmd *cobra.Command, args []string) error {
 
 func runProjectStart(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	if apiClient != nil {
+		resp, err := apiClient.StartProject(name)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM started\n", name)
+		if resp.Instance != nil && resp.Instance.IPAddress != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  IP: %s\n", resp.Instance.IPAddress)
+		}
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -689,8 +837,25 @@ func runProjectStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+//nolint:funlen // CLI handler with stop-wait-start sequence and API mode
 func runProjectRestart(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	if apiClient != nil {
+		if err := apiClient.StopProject(name); err != nil {
+			return fmt.Errorf("failed to stop project: %w", err)
+		}
+		resp, err := apiClient.StartProject(name)
+		if err != nil {
+			return fmt.Errorf("failed to start project: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM restarted\n", name)
+		if resp.Instance != nil && resp.Instance.IPAddress != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  IP: %s\n", resp.Instance.IPAddress)
+		}
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -761,8 +926,12 @@ start:
 
 const updateInitChunkSize = 512 * 1024 // 512KB
 
-//nolint:funlen,gocognit // CLI handler with multi-phase chunked binary transfer
+//nolint:funlen,gocognit,gocyclo,cyclop // CLI handler with multi-phase chunked binary transfer
 func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("project update-init is not available in API mode")
+	}
+
 	name := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

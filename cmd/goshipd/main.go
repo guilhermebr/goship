@@ -28,14 +28,14 @@ var (
 )
 
 type Config struct {
-	Addr               string `conf:"default::8080,env:GOSHIP_ADDR"`
-	DataDir            string `conf:"default:~/.goship,env:GOSHIP_DATA_DIR"`
-	InitBinaryPath     string `conf:"default:./bin/goship-init,env:GOSHIP_INIT_BINARY"`
-	SkipGuestProvision bool   `conf:"default:false,env:GOSHIP_SKIP_GUEST_PROVISION"`
-	InstallDocker      bool   `conf:"default:true,env:GOSHIP_INSTALL_DOCKER"`
-	LibvirtURI         string `conf:"default:qemu:///system,env:GOSHIP_LIBVIRT_URI"`
-	NetworkType        string `conf:"default:,env:GOSHIP_NETWORK_TYPE"`
-	NetworkSource      string `conf:"default:,env:GOSHIP_NETWORK_SOURCE"`
+	Addr               string `conf:"default::8080"`
+	DataDir            string `conf:"default:~/.goship"`
+	InitBinaryPath     string `conf:"default:./bin/goship-init"`
+	SkipGuestProvision bool   `conf:"default:false"`
+	InstallDocker      bool   `conf:"default:true"`
+	LibvirtURI         string `conf:"default:qemu:///system"`
+	NetworkType        string
+	NetworkSource      string
 }
 
 func main() {

@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	apiserver "github.com/guilhermebr/goship/internal/api"
 	"github.com/guilhermebr/goship/internal/compose"
 	"github.com/guilhermebr/goship/internal/shared/size"
 	"github.com/guilhermebr/goship/internal/vault"
@@ -185,8 +186,21 @@ func init() {
 	appCmd.AddCommand(appPushImageCmd)
 }
 
+// getProjectIDViaAPI resolves a project name to its ID using the API client.
+func getProjectIDViaAPI(nameOrID string) (string, error) {
+	resp, err := apiClient.GetProject(nameOrID)
+	if err != nil {
+		return "", fmt.Errorf("project not found: %s", nameOrID)
+	}
+	return resp.ID, nil
+}
+
 func runAppCreate(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		return runAppCreateAPI(cmd, projectName, appName)
+	}
 
 	project, err := store.GetProject(projectName)
 	if err != nil {
@@ -281,8 +295,62 @@ func printAppCreated(out io.Writer, app *entities.AppSpec, projectName string) {
 	fmt.Fprintf(out, "\nUse 'goshipctl app deploy %s %s' to start it.\n", projectName, app.Name)
 }
 
+func runAppCreateAPI(cmd *cobra.Command, projectName, appName string) error {
+	projectID, err := getProjectIDViaAPI(projectName)
+	if err != nil {
+		return err
+	}
+
+	mode := entities.ExecutionMode(appMode)
+
+	var memoryMB int64
+	if appMemory != "" {
+		memoryMB, err = size.ParseSizeMB(appMemory)
+		if err != nil {
+			return fmt.Errorf("invalid --memory value: %w", err)
+		}
+	}
+
+	ports, err := parsePorts(appPorts)
+	if err != nil {
+		return err
+	}
+
+	env, err := mergeEnvFlags(appEnvFile, appEnv)
+	if err != nil {
+		return err
+	}
+
+	req := apiserver.CreateAppRequest{
+		Name:          appName,
+		ExecutionMode: mode,
+		Image:         appImage,
+		Binary:        appBinary,
+		Ports:         ports,
+		Env:           env,
+		Resources: entities.Resources{
+			CPU:      appCPU,
+			MemoryMB: memoryMB,
+		},
+		RestartPolicy: entities.RestartPolicy(appRestartPolicy),
+		Replicas:      appReplicas,
+	}
+
+	app, createErr := apiClient.CreateApp(projectID, req)
+	if createErr != nil {
+		return createErr
+	}
+
+	printAppCreated(cmd.OutOrStdout(), app, projectName)
+	return nil
+}
+
 //nolint:funlen,gocognit,gocyclo,cyclop // CLI handler with complex flag parsing and validation
 func runAppEdit(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("app edit is not available in API mode")
+	}
+
 	projectName, appName := args[0], args[1]
 
 	project, err := store.GetProject(projectName)
@@ -389,6 +457,27 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 //nolint:funlen,gocognit,gocyclo,cyclop,nestif // CLI handler with complex deployment logic and binary upload
 func runAppDeploy(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		projectID, err := getProjectIDViaAPI(projectName)
+		if err != nil {
+			return err
+		}
+		req := &apiserver.DeployAppRequest{Image: appImage}
+		app, deployErr := apiClient.DeployApp(projectID, appName, req)
+		if deployErr != nil {
+			return deployErr
+		}
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "App '%s' deployed successfully in project '%s'\n", appName, projectName)
+		if app.IsContainerMode() {
+			fmt.Fprintf(out, "  Image: %s\n", app.Image)
+		} else {
+			fmt.Fprintf(out, "  Binary: %s\n", app.Binary)
+		}
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -515,6 +604,31 @@ func runAppDeploy(cmd *cobra.Command, args []string) error {
 func runAppList(cmd *cobra.Command, args []string) error {
 	projectName := args[0]
 
+	if apiClient != nil {
+		projectID, err := getProjectIDViaAPI(projectName)
+		if err != nil {
+			return err
+		}
+		apps, listErr := apiClient.ListApps(projectID)
+		if listErr != nil {
+			return listErr
+		}
+		if len(apps) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "No apps found in project '%s'.\n", projectName)
+			return nil
+		}
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tMODE\tIMAGE/BINARY\tPORTS")
+		for _, app := range apps {
+			ref := app.Image
+			if app.IsProcessMode() {
+				ref = app.Binary
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", app.Name, app.ExecutionMode, ref, formatPorts(app.Ports))
+		}
+		return w.Flush()
+	}
+
 	project, err := store.GetProject(projectName)
 	if err != nil {
 		return fmt.Errorf("project not found: %s", projectName)
@@ -560,6 +674,10 @@ func runAppList(cmd *cobra.Command, args []string) error {
 //nolint:funlen,gocognit // CLI handler with detailed app info display
 func runAppInfo(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		return runAppInfoAPI(cmd, projectName, appName)
+	}
 
 	project, err := store.GetProject(projectName)
 	if err != nil {
@@ -642,8 +760,49 @@ func runAppInfo(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runAppInfoAPI(cmd *cobra.Command, projectName, appName string) error {
+	projectID, err := getProjectIDViaAPI(projectName)
+	if err != nil {
+		return err
+	}
+
+	app, err := apiClient.GetApp(projectID, appName)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "App: %s\n", app.Name)
+	fmt.Fprintf(out, "  Project:  %s\n", projectName)
+	fmt.Fprintf(out, "  Mode:     %s\n", app.ExecutionMode)
+	if app.IsContainerMode() {
+		fmt.Fprintf(out, "  Image:    %s\n", app.Image)
+	} else {
+		fmt.Fprintf(out, "  Binary:   %s\n", app.Binary)
+	}
+	fmt.Fprintf(out, "  Replicas: %d\n", app.Replicas)
+	if len(app.Ports) > 0 {
+		fmt.Fprintf(out, "  Ports:    %s\n", formatPorts(app.Ports))
+	}
+	fmt.Fprintf(out, "  Created:  %s\n", app.CreatedAt.Format(time.RFC3339))
+	return nil
+}
+
 func runAppStop(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		projectID, err := getProjectIDViaAPI(projectName)
+		if err != nil {
+			return err
+		}
+		if err := apiClient.StopApp(projectID, appName); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "App '%s' stopped in project '%s'\n", appName, projectName)
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -675,6 +834,19 @@ func runAppStop(cmd *cobra.Command, args []string) error {
 
 func runAppDelete(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		projectID, err := getProjectIDViaAPI(projectName)
+		if err != nil {
+			return err
+		}
+		if err := apiClient.DeleteApp(projectID, appName); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "App '%s' deleted from project '%s'\n", appName, projectName)
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -781,6 +953,11 @@ func parseEnv(envStrs []string) map[string]string {
 
 func runAppLogs(cmd *cobra.Command, args []string) error {
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		return runAppLogsAPI(cmd, projectName, appName)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -841,7 +1018,29 @@ func runAppLogs(cmd *cobra.Command, args []string) error {
 	}
 }
 
+func runAppLogsAPI(cmd *cobra.Command, projectName, appName string) error {
+	projectID, err := getProjectIDViaAPI(projectName)
+	if err != nil {
+		return err
+	}
+
+	logs, err := apiClient.GetAppLogs(projectID, appName, appLogLines)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprint(cmd.OutOrStdout(), logs)
+	if logs != "" && !strings.HasSuffix(logs, "\n") {
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
+	return nil
+}
+
 func runAppPushImage(cmd *cobra.Command, args []string) error {
+	if apiClient != nil {
+		return errors.New("app push-image is not available in API mode")
+	}
+
 	projectName, imageRef := args[0], args[1]
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
