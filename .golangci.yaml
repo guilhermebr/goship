@@ -187,6 +187,11 @@ linters:
           - revive
         path: internal/agent/runtime/runtime\.go
         text: "var-naming|exported"
+      # mock runtime implements ProjectRuntime interface which has 4 return values on ExecCommand
+      - linters:
+          - revive
+        path: internal/agent/runtime/mock/
+        text: "function-result-limit"
 
 issues:
   max-issues-per-linter: 0

@@ -272,8 +272,6 @@ func (m *Runtime) StreamLogs(
 }
 
 // ExecCommand implements runtime.ProjectRuntime.
-//
-//nolint:revive // Signature matches the ProjectRuntime interface.
 func (m *Runtime) ExecCommand(
 	ctx context.Context, instanceID, appName string, cmd []string,
 ) (stdout, stderr string, exitCode int, err error) {
