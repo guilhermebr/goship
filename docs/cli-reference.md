@@ -13,6 +13,26 @@ These flags apply to all commands:
 | `--goship-init` | `./bin/goship-init` | Path to the goship-init binary used during VM provisioning |
 | `--skip-guest-provision` | `false` | Skip guest disk provisioning (goship-init injection) |
 | `--install-docker` | `true` | Install Docker during guest provisioning |
+| `--api-url` | *(empty)* | GoShip API server URL (env: `GOSHIP_API_URL`). When set, CLI uses HTTP instead of direct libvirt |
+
+### API Mode
+
+When `--api-url` (or `GOSHIP_API_URL`) is set, `goshipctl` talks to a running `goshipd` server over HTTP instead of calling libvirt directly. This enables remote management without requiring libvirt on the client machine.
+
+```bash
+# Start the API server
+goshipd &
+
+# Use CLI in API mode
+export GOSHIP_API_URL=http://localhost:8080
+goshipctl project list
+goshipctl project create myapp --cpu 1 --memory 512
+```
+
+Some commands are not available in API mode and return an error:
+- `project console`, `project logs`, `project edit`, `project update-init`
+- `app edit`, `app push-image`
+- `env set`, `env list`, `env delete`
 
 ---
 
@@ -436,6 +456,46 @@ goshipctl app logs <project> <appname> [flags]
 goshipctl app logs myapp web
 goshipctl app logs myapp api -n 50
 goshipctl app logs myapp web -f
+```
+
+---
+
+### `goshipctl app push-image <project> <image>`
+
+Exports a local Docker image, compresses it with gzip, and transfers it into the project VM over virtio-serial. No registry needed.
+
+```bash
+goshipctl app push-image myapp myimage:latest
+```
+
+### `goshipctl app edit <project> <appname>`
+
+Modifies an application's configuration without deploying. Changes take effect on next `app deploy`.
+
+```bash
+goshipctl app edit <project> <appname> [flags]
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i, --image` | | Container image |
+| `-b, --binary` | | Binary path (process mode) |
+| `-p, --port` | | Port mapping (repeatable, replaces all) |
+| `-e, --env` | | Set env var `KEY=VALUE` (repeatable) |
+| `--env-file` | | Load env vars from a file |
+| `-d, --description` | | App description |
+| `-g, --tag` | | Tags (repeatable, replaces all) |
+| `--restart-policy` | | Restart policy: `never`, `always`, `on-failure` |
+| `--cpu` | | CPU limit in cores |
+| `--memory` | | Memory limit (e.g., `512M`, `2G`) |
+
+**Example:**
+
+```bash
+goshipctl app edit myapp web --port 9090:80 --env "LOG_LEVEL=debug"
+goshipctl app deploy myapp web  # apply changes
 ```
 
 ---

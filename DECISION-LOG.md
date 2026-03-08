@@ -378,6 +378,29 @@ Each entry follows a lightweight ADR (Architecture Decision Record) format: a on
 
 ---
 
+## REST API Server & CLI HTTP Client (Mar 7, 2026)
+
+### ADR-039: REST API server (goshipd) with dual-mode CLI
+
+- **Decision**: Add a REST API server (`goshipd`) and an HTTP client in `goshipctl` that activates when `GOSHIP_API_URL` is set, with backward-compatible fallback to direct libvirt when unset.
+- **Context**: Phase 0's direct-libvirt CLI works well on the VM host, but remote management requires a server. Users need a way to manage projects and apps from machines without libvirt installed.
+- **Alternatives considered**:
+  - **gRPC API** — More efficient but adds protobuf dependency and is harder to debug (no `curl`).
+  - **Separate CLI binary** — A dedicated `goship` client that only speaks HTTP. Doubles the tooling surface.
+  - **Always require API server** — Breaking change for existing direct-mode users.
+- **Rationale**: The dual-mode pattern (`if apiClient != nil` guard at the top of each handler) keeps existing direct-mode code untouched while adding HTTP support. The client imports `apiserver` types directly (no type duplication). Commands without API equivalents (console, project logs, edit, update-init, push-image, env) return clear errors in API mode. The `--api-url` flag and `GOSHIP_API_URL` env var follow the existing `ardanlabs/conf` config pattern.
+- **Status**: Accepted
+
+### ADR-040: Commands unavailable in API mode return errors
+
+- **Decision**: Commands that require direct VM access (console, project logs, edit, update-init, push-image, env) return `"not available in API mode"` errors instead of silently degrading.
+- **Context**: Some CLI operations require virtio-serial access, local binary paths, or virsh — none of which work over HTTP.
+- **Alternatives considered**: Implement server-side equivalents for all commands; silently skip unavailable features.
+- **Rationale**: Explicit errors are better than silent failure. Users know immediately which operations require direct access. Server-side equivalents can be added incrementally in future steps (e.g., server-side logs endpoint already exists for app logs). The error message tells the user exactly what's happening.
+- **Status**: Accepted
+
+---
+
 ## Summary of Superseded Decisions
 
 | Original | Superseded by | What changed |

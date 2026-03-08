@@ -157,6 +157,26 @@ The binary is uploaded over virtio-serial with SHA256 verification, then started
 ./bin/goshipctl project delete myapp
 ```
 
+## Using the API Server
+
+Instead of calling libvirt directly, you can run the `goshipd` REST API server and point the CLI at it:
+
+```bash
+# Start the API server (runs on :8080 by default)
+goshipd &
+
+# Point the CLI at the API server
+export GOSHIP_API_URL=http://localhost:8080
+
+# All project/app commands now go through HTTP
+./bin/goshipctl project list
+./bin/goshipctl project create myapp --cpu 1 --memory 512
+./bin/goshipctl app create myapp web --image nginx:alpine --port 8080:80
+./bin/goshipctl app deploy myapp web
+```
+
+This enables remote management — the CLI no longer requires libvirt on the client machine. Some commands that require direct VM access (console, project logs, push-image) are not available in API mode.
+
 ## Next Steps
 
 - [Concepts](concepts.md) — Understand how GoShip works under the hood

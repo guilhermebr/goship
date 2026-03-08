@@ -82,6 +82,8 @@ GoShip is built around a simple model:
 - **Auto network setup** — Ensures the libvirt `default` network is active before VM creation
 - **DAC security labels** — Numeric UID/GID labels for precise QEMU file access control
 - **Environment variables** — Project-level env vars inherited by all apps, with AES-256-GCM vault encryption for secrets
+- **REST API server** — `goshipd` serves a JSON API for project and app management
+- **API mode CLI** — Set `GOSHIP_API_URL` to use `goshipctl` against a remote `goshipd` instead of local libvirt
 
 ---
 
@@ -120,6 +122,10 @@ goshipctl project create myapp --cpu 1 --memory 512
 goshipctl env set myapp APP_ENV=production LOG_LEVEL=info
 goshipctl env set myapp DB_PASSWORD=s3cret --secret
 goshipctl env list myapp
+
+# Or use the REST API server
+goshipd &
+export GOSHIP_API_URL=http://localhost:8080
 
 # Deploy a container app (inherits project env vars)
 goshipctl app create myapp web --image nginx:alpine --port 8080:80

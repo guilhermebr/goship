@@ -10,6 +10,12 @@ GoShip is a VM-centric application platform. Instead of deploying apps directly 
 You (CLI) --> goshipctl --> libvirt/QEMU --> VM --> GoShip Init --> Your App
 ```
 
+GoShip also supports an API mode where the CLI talks to a REST API server (`goshipd`) instead of calling libvirt directly:
+
+```
+You (CLI) --> goshipctl --> goshipd (HTTP) --> libvirt/QEMU --> VM --> GoShip Init --> Your App
+```
+
 ## Projects
 
 A **project** is the top-level isolation boundary. Each project owns exactly one VM (in Phase 0) and all applications within that project run inside that VM.
@@ -102,7 +108,8 @@ GoShip uses a three-tier execution model:
 └──────────────────────────────────┘
 ```
 
-- **goshipctl** — The CLI tool you interact with. In Phase 0 it talks directly to libvirt (no API server).
+- **goshipctl** — The CLI tool you interact with. By default it talks directly to libvirt. When `GOSHIP_API_URL` is set, it talks to `goshipd` over HTTP instead.
+- **goshipd** — The REST API server. It wraps the same libvirt runtime and state store behind a JSON API, enabling remote management.
 - **Libvirt Runtime** — The backend that translates project/app operations into VM lifecycle calls (domain XML, CoW disks, cloud-init, virtio-serial communication).
 - **GoShip Init** — A static Go binary injected into each VM during provisioning. It runs as PID 1, listens on a virtio-serial device, and executes commands from the host (deploy, stop, status, logs).
 
