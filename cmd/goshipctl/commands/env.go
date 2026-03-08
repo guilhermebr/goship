@@ -59,13 +59,38 @@ func init() {
 	envCmd.AddCommand(envDeleteCmd)
 }
 
+//nolint:gocognit,funlen // CLI handler with API mode and encryption branching
 func runEnvSet(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("env commands are not available in API mode")
-	}
-
 	projectName := args[0]
 	kvPairs := args[1:]
+
+	// Parse KEY=VALUE pairs.
+	parsed := parseEnv(kvPairs)
+	if len(parsed) != len(kvPairs) {
+		return errors.New("invalid format: all arguments must be KEY=VALUE")
+	}
+
+	if apiClient != nil {
+		_, err := apiClient.SetEnv(projectName, parsed, envSecretFlag)
+		if err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		keys := make([]string, 0, len(parsed))
+		for k := range parsed {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if envSecretFlag {
+				fmt.Fprintf(out, "  %s=%s  (encrypted)\n", k, maskedValue)
+			} else {
+				fmt.Fprintf(out, "  %s=%s\n", k, parsed[k])
+			}
+		}
+		fmt.Fprintf(out, "Environment updated for project '%s'\n", projectName)
+		return nil
+	}
 
 	project, err := store.GetProject(projectName)
 	if err != nil {
@@ -74,12 +99,6 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	if project.Env == nil {
 		project.Env = make(map[string]string)
-	}
-
-	// Parse KEY=VALUE pairs.
-	parsed := parseEnv(kvPairs)
-	if len(parsed) != len(kvPairs) {
-		return errors.New("invalid format: all arguments must be KEY=VALUE")
 	}
 
 	// Encrypt values if --secret flag is set.
@@ -127,12 +146,42 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+//nolint:gocognit,funlen // CLI handler with API mode and decryption branching
 func runEnvList(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("env commands are not available in API mode")
-	}
-
 	projectName := args[0]
+
+	if apiClient != nil {
+		resp, err := apiClient.ListEnv(projectName, envShowValues)
+		if err != nil {
+			return err
+		}
+		if len(resp.Env) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "No environment variables set for project '%s'.\n", projectName)
+			return nil
+		}
+		keys := make([]string, 0, len(resp.Env))
+		for k := range resp.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "KEY\tVALUE\tSECRET")
+		for _, k := range keys {
+			v := resp.Env[k]
+			secret := vault.IsEncrypted(v)
+			displayVal := v
+			if secret && !envShowValues {
+				displayVal = maskedValue
+			}
+			secretLabel := ""
+			if secret {
+				secretLabel = statusYes
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", k, displayVal, secretLabel)
+		}
+		return w.Flush()
+	}
 
 	project, err := store.GetProject(projectName)
 	if err != nil {
@@ -177,7 +226,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 		secretLabel := ""
 		if secret {
-			secretLabel = "yes"
+			secretLabel = statusYes
 		}
 
 		fmt.Fprintf(w, "%s\t%s\t%s\n", k, displayVal, secretLabel)
@@ -187,12 +236,21 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvDelete(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("env commands are not available in API mode")
-	}
-
 	projectName := args[0]
 	keys := args[1:]
+
+	if apiClient != nil {
+		_, err := apiClient.DeleteEnv(projectName, keys)
+		if err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		for _, k := range keys {
+			fmt.Fprintf(out, "  %s: deleted\n", k)
+		}
+		fmt.Fprintf(out, "Environment updated for project '%s'\n", projectName)
+		return nil
+	}
 
 	project, err := store.GetProject(projectName)
 	if err != nil {

@@ -347,11 +347,11 @@ func runAppCreateAPI(cmd *cobra.Command, projectName, appName string) error {
 
 //nolint:funlen,gocognit,gocyclo,cyclop // CLI handler with complex flag parsing and validation
 func runAppEdit(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("app edit is not available in API mode")
-	}
-
 	projectName, appName := args[0], args[1]
+
+	if apiClient != nil {
+		return runAppEditAPI(cmd, projectName, appName)
+	}
 
 	project, err := store.GetProject(projectName)
 	if err != nil {
@@ -451,6 +451,79 @@ func runAppEdit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprint(out, "\nNote: changes take effect on next deploy.\n")
 
+	return nil
+}
+
+//nolint:funlen // CLI handler with many optional flag checks
+func runAppEditAPI(cmd *cobra.Command, projectName, appName string) error {
+	projectID, err := getProjectIDViaAPI(projectName)
+	if err != nil {
+		return err
+	}
+
+	req := apiserver.UpdateAppRequest{}
+	hasChanges := false
+
+	if cmd.Flags().Changed("image") {
+		req.Image = &appEditImage
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("binary") {
+		req.Binary = &appEditBinary
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("port") {
+		ports, portErr := parsePorts(appEditPorts)
+		if portErr != nil {
+			return portErr
+		}
+		req.Ports = ports
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("env-file") || cmd.Flags().Changed("env") {
+		env, envErr := mergeEnvFlags(appEditEnvFile, appEditEnv)
+		if envErr != nil {
+			return envErr
+		}
+		req.Env = env
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("description") {
+		req.Description = &appEditDescription
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("tag") {
+		req.Tags = appEditTags
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("restart-policy") {
+		req.RestartPolicy = &appEditRestartPolicy
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("cpu") {
+		req.CPU = &appEditCPU
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("memory") {
+		memMB, memErr := size.ParseSizeMB(appEditMemory)
+		if memErr != nil {
+			return fmt.Errorf("invalid --memory value: %w", memErr)
+		}
+		req.MemoryMB = &memMB
+		hasChanges = true
+	}
+
+	if !hasChanges {
+		return errors.New("no changes specified; use flags to modify app fields (see --help)")
+	}
+
+	_, err = apiClient.UpdateApp(projectID, appName, req)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "App '%s' updated in project '%s'\n", appName, projectName)
+	fmt.Fprint(cmd.OutOrStdout(), "Note: changes take effect on next deploy.\n")
 	return nil
 }
 
@@ -1037,11 +1110,11 @@ func runAppLogsAPI(cmd *cobra.Command, projectName, appName string) error {
 }
 
 func runAppPushImage(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("app push-image is not available in API mode")
-	}
-
 	projectName, imageRef := args[0], args[1]
+
+	if apiClient != nil {
+		return runAppPushImageAPI(cmd, projectName, imageRef)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -1059,6 +1132,64 @@ func runAppPushImage(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 	if err := pushLocalImage(ctx, out, instance.ID, imageRef); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "Image '%s' pushed to project '%s'\n", imageRef, projectName)
+	return nil
+}
+
+func runAppPushImageAPI(cmd *cobra.Command, projectName, imageRef string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Exporting image '%s'...\n", imageRef)
+
+	// Create temp file for the compressed image.
+	tmpFile, err := os.CreateTemp("", "goship-image-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
+
+	// Run docker save and pipe through gzip to temp file.
+	dockerSave := exec.CommandContext(ctx, "docker", "save", imageRef)
+	saveOut, err := dockerSave.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create pipe: %w", err)
+	}
+	if startErr := dockerSave.Start(); startErr != nil {
+		return fmt.Errorf("failed to run 'docker save %s': %w", imageRef, startErr)
+	}
+
+	gzWriter := gzip.NewWriter(tmpFile)
+	if _, copyErr := io.Copy(gzWriter, saveOut); copyErr != nil {
+		_ = dockerSave.Wait()
+		return fmt.Errorf("failed to compress image: %w", copyErr)
+	}
+	if closeErr := gzWriter.Close(); closeErr != nil {
+		_ = dockerSave.Wait()
+		return fmt.Errorf("failed to finalize compression: %w", closeErr)
+	}
+	if waitErr := dockerSave.Wait(); waitErr != nil {
+		return fmt.Errorf("docker save failed: %w", waitErr)
+	}
+
+	stat, err := tmpFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat compressed image: %w", err)
+	}
+	if _, seekErr := tmpFile.Seek(0, io.SeekStart); seekErr != nil {
+		return fmt.Errorf("failed to seek: %w", seekErr)
+	}
+
+	const mbDivisor = 1024 * 1024
+	fmt.Fprintf(out, "  Compressed size: %.1f MB\n", float64(stat.Size())/mbDivisor)
+	fmt.Fprint(out, "Pushing image to project via API...\n")
+
+	if err := apiClient.PushImage(projectName, imageRef, tmpFile, stat.Size()); err != nil {
 		return err
 	}
 

@@ -669,3 +669,237 @@ func TestActionLog_NotOnError(t *testing.T) {
 		t.Fatalf("expected no action log on error, got: %s", logOutput)
 	}
 }
+
+// --- New endpoint tests ---
+
+func TestProjectRestart_NoRuntime(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	w := doRequest(srv, http.MethodPost, "/api/v1/projects/"+project.ID+"/restart", nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProjectUpdate_NoRuntime(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	cpu := 2.0
+	body := apiserver.UpdateProjectRequest{CPU: &cpu}
+	w := doRequest(srv, http.MethodPut, "/api/v1/projects/"+project.ID, body)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProjectUpdate_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+
+	cpu := 2.0
+	body := apiserver.UpdateProjectRequest{CPU: &cpu}
+	w := doRequest(srv, http.MethodPut, "/api/v1/projects/nonexistent", body)
+	// No runtime = 503
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAppUpdate_Found(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	if err := store.SetApp(project.ID, &entities.AppSpec{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx:alpine",
+		Replicas:      1,
+		CreatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to set app: %v", err)
+	}
+
+	newImage := "nginx:latest"
+	body := apiserver.UpdateAppRequest{Image: &newImage}
+	w := doRequest(srv, http.MethodPut, "/api/v1/projects/"+project.ID+"/apps/web", body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var app entities.AppSpec
+	if err := json.NewDecoder(w.Body).Decode(&app); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if app.Image != "nginx:latest" {
+		t.Fatalf("expected image 'nginx:latest', got %s", app.Image)
+	}
+
+	// Verify in store.
+	stored := store.GetApp(project.ID, "web")
+	if stored.Image != "nginx:latest" {
+		t.Fatalf("expected stored image 'nginx:latest', got %s", stored.Image)
+	}
+}
+
+func TestAppUpdate_NotFound(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	newImage := "nginx:latest"
+	body := apiserver.UpdateAppRequest{Image: &newImage}
+	w := doRequest(srv, http.MethodPut, "/api/v1/projects/"+project.ID+"/apps/nonexistent", body)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAppUpdate_NoChanges(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	if err := store.SetApp(project.ID, &entities.AppSpec{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx:alpine",
+		Replicas:      1,
+		CreatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to set app: %v", err)
+	}
+
+	body := apiserver.UpdateAppRequest{} // empty
+	w := doRequest(srv, http.MethodPut, "/api/v1/projects/"+project.ID+"/apps/web", body)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestEnvSet(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	body := apiserver.SetEnvRequest{
+		Env: map[string]string{"FOO": "bar", "BAZ": "qux"},
+	}
+	w := doRequest(srv, http.MethodPut, "/api/v1/projects/"+project.ID+"/env", body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp apiserver.EnvResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Env["FOO"] != "bar" {
+		t.Fatalf("expected FOO=bar, got %s", resp.Env["FOO"])
+	}
+
+	// Verify in store.
+	p, _ := store.GetProject(project.ID)
+	if p.Env["FOO"] != "bar" {
+		t.Fatalf("expected stored FOO=bar, got %s", p.Env["FOO"])
+	}
+}
+
+func TestEnvList(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	project.Env = map[string]string{"KEY1": "val1", "KEY2": "val2"}
+	if err := store.UpdateProject(project); err != nil {
+		t.Fatalf("failed to update project: %v", err)
+	}
+
+	w := doRequest(srv, http.MethodGet, "/api/v1/projects/"+project.ID+"/env", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp apiserver.EnvResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Env) != 2 {
+		t.Fatalf("expected 2 env vars, got %d", len(resp.Env))
+	}
+}
+
+func TestEnvDelete(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	project.Env = map[string]string{"KEY1": "val1", "KEY2": "val2"}
+	if err := store.UpdateProject(project); err != nil {
+		t.Fatalf("failed to update project: %v", err)
+	}
+
+	body := apiserver.DeleteEnvRequest{Keys: []string{"KEY1"}}
+	w := doRequest(srv, http.MethodDelete, "/api/v1/projects/"+project.ID+"/env", body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp apiserver.EnvResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Env) != 1 {
+		t.Fatalf("expected 1 env var, got %d", len(resp.Env))
+	}
+	if _, ok := resp.Env["KEY1"]; ok {
+		t.Fatal("KEY1 should have been deleted")
+	}
+}
+
+func TestProjectLogs_NoRuntime(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	w := doRequest(srv, http.MethodGet, "/api/v1/projects/"+project.ID+"/logs?source=goship-init", nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}

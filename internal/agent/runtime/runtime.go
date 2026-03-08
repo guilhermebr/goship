@@ -66,6 +66,10 @@ type ProjectRuntime interface {
 	// GetAppLogs retrieves log output from an application inside a VM instance.
 	GetAppLogs(ctx context.Context, instanceID string, appName string, lines int) (string, error)
 
+	// GetVMLogs retrieves log output from a VM instance (e.g., goship-init, cloud-init).
+	// source is a well-known alias (goship-init, cloud-init), logFile is an explicit path.
+	GetVMLogs(ctx context.Context, instanceID string, source string, logFile string, lines int) (string, error)
+
 	// StreamLogs streams logs from an application inside a VM instance.
 	StreamLogs(ctx context.Context, instanceID string, appName string, follow bool) (io.ReadCloser, error)
 

@@ -53,6 +53,15 @@ func (c *Client) DeleteApp(projectID, name string) error {
 	return c.delete(fmt.Sprintf("/api/v1/projects/%s/apps/%s", projectID, name))
 }
 
+// UpdateApp updates an app's configuration.
+func (c *Client) UpdateApp(projectID, name string, req apiserver.UpdateAppRequest) (*entities.AppSpec, error) {
+	var app entities.AppSpec
+	if err := c.put(fmt.Sprintf("/api/v1/projects/%s/apps/%s", projectID, name), req, &app); err != nil {
+		return nil, err
+	}
+	return &app, nil
+}
+
 // GetAppLogs returns logs for an app.
 func (c *Client) GetAppLogs(projectID, name string, lines int) (string, error) {
 	path := fmt.Sprintf("/api/v1/projects/%s/apps/%s/logs?lines=%d", projectID, name, lines)

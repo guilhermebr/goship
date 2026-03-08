@@ -56,3 +56,39 @@ func (c *Client) StartProject(idOrName string) (*apiserver.ProjectResponse, erro
 	}
 	return &resp, nil
 }
+
+// RestartProject restarts a project's VM (stop then start in a single call).
+func (c *Client) RestartProject(idOrName string) (*apiserver.ProjectResponse, error) {
+	var resp apiserver.ProjectResponse
+	if err := c.post(fmt.Sprintf("/api/v1/projects/%s/restart", idOrName), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// UpdateProject updates a project's resource allocation.
+func (c *Client) UpdateProject(
+	idOrName string, req apiserver.UpdateProjectRequest,
+) (*apiserver.ProjectResponse, error) {
+	var resp apiserver.ProjectResponse
+	if err := c.put(fmt.Sprintf("/api/v1/projects/%s", idOrName), req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetProjectLogs returns VM logs for a project.
+func (c *Client) GetProjectLogs(idOrName, source, logFile string, lines int) (string, error) {
+	path := fmt.Sprintf("/api/v1/projects/%s/logs?lines=%d", idOrName, lines)
+	if source != "" {
+		path += "&source=" + source
+	}
+	if logFile != "" {
+		path += "&file=" + logFile
+	}
+	var resp apiserver.ProjectLogsResponse
+	if err := c.get(path, &resp); err != nil {
+		return "", err
+	}
+	return resp.Logs, nil
+}

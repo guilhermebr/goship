@@ -45,8 +45,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/projects/{id}", s.logMiddleware(s.handleProjectDelete))
 	s.mux.HandleFunc("POST /api/v1/projects/{id}/stop", s.logMiddleware(s.handleProjectStop))
 	s.mux.HandleFunc("POST /api/v1/projects/{id}/start", s.logMiddleware(s.handleProjectStart))
+	s.mux.HandleFunc("POST /api/v1/projects/{id}/restart", s.logMiddleware(s.handleProjectRestart))
+	s.mux.HandleFunc("PUT /api/v1/projects/{id}", s.logMiddleware(s.handleProjectUpdate))
+	s.mux.HandleFunc("GET /api/v1/projects/{id}/logs", s.logMiddleware(s.handleProjectLogs))
+	s.mux.HandleFunc("PUT /api/v1/projects/{id}/env", s.logMiddleware(s.handleEnvSet))
+	s.mux.HandleFunc("GET /api/v1/projects/{id}/env", s.logMiddleware(s.handleEnvList))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{id}/env", s.logMiddleware(s.handleEnvDelete))
+	s.mux.HandleFunc("POST /api/v1/projects/{id}/push-image", s.logMiddleware(s.handlePushImage))
+	s.mux.HandleFunc("POST /api/v1/projects/{id}/update-init", s.logMiddleware(s.handleUpdateInit))
 
 	// Apps
+	s.mux.HandleFunc("PUT /api/v1/projects/{id}/apps/{name}", s.logMiddleware(s.handleAppUpdate))
 	s.mux.HandleFunc("GET /api/v1/projects/{id}/apps", s.logMiddleware(s.handleAppList))
 	s.mux.HandleFunc("POST /api/v1/projects/{id}/apps", s.logMiddleware(s.handleAppCreate))
 	s.mux.HandleFunc("GET /api/v1/projects/{id}/apps/{name}", s.logMiddleware(s.handleAppGet))

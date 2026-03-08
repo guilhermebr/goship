@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/guilhermebr/goship/internal/shared/size"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
@@ -227,4 +229,243 @@ func (s *Server) handleProjectStart(w http.ResponseWriter, r *http.Request) {
 		Instance: instance,
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleProjectRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRuntime(w) {
+		return
+	}
+
+	id := r.PathValue("id")
+
+	project, err := s.store.GetProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
+		return
+	}
+
+	instance := s.store.GetInstance(project.ID)
+	if instance == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no VM instance for project %s", id))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+
+	s.rt.LoadInstance(instance)
+
+	// Stop the VM.
+	if err := s.rt.StopInstance(ctx, instance.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to stop VM: %v", err))
+		return
+	}
+
+	// Wait for the domain to reach shut off state.
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			writeError(w, http.StatusGatewayTimeout, "timed out waiting for VM to stop")
+			return
+		case <-ticker.C:
+			status, err := s.rt.GetInstanceStatus(ctx, instance.ID)
+			if err != nil {
+				continue
+			}
+			if status.State == entities.InstanceStateStopped {
+				goto start
+			}
+		}
+	}
+
+start:
+	// Start the VM.
+	if err := s.rt.StartInstance(ctx, instance.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to start VM: %v", err))
+		return
+	}
+
+	if err := s.store.UpdateInstance(instance); err != nil {
+		s.logger.Printf("failed to update instance state: %v", err)
+	}
+
+	project.State = entities.ProjectStateRunning
+	if err := s.store.UpdateProject(project); err != nil {
+		s.logger.Printf("failed to update project state: %v", err)
+	}
+
+	s.logger.Printf("project restarted: name=%s id=%s", project.Name, project.ID)
+
+	resp := ProjectResponse{
+		Project:  project,
+		Instance: instance,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// UpdateProjectRequest is the request body for updating a project's resources.
+type UpdateProjectRequest struct {
+	CPU      *float64 `json:"cpu,omitempty"`
+	MemoryMB *int64   `json:"memory_mb,omitempty"`
+	Memory   *string  `json:"memory,omitempty"`
+	DiskMB   *int64   `json:"disk_mb,omitempty"`
+	Disk     *string  `json:"disk,omitempty"`
+}
+
+//nolint:funlen // Handler applies many optional resource fields
+func (s *Server) handleProjectUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRuntime(w) {
+		return
+	}
+
+	id := r.PathValue("id")
+
+	project, err := s.store.GetProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
+		return
+	}
+
+	instance := s.store.GetInstance(project.ID)
+	if instance == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no VM instance for project %s", id))
+		return
+	}
+
+	if instance.State != entities.InstanceStateStopped {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("VM must be stopped before editing (current state: %s)", instance.State))
+		return
+	}
+
+	var req UpdateProjectRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	hasChanges := false
+
+	if req.CPU != nil {
+		project.Resources.CPU = *req.CPU
+		hasChanges = true
+	}
+
+	if req.MemoryMB != nil {
+		project.Resources.MemoryMB = *req.MemoryMB
+		hasChanges = true
+	} else if req.Memory != nil {
+		memMB, err := size.ParseSizeMB(*req.Memory)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid memory value: %v", err))
+			return
+		}
+		project.Resources.MemoryMB = memMB
+		hasChanges = true
+	}
+
+	if req.DiskMB != nil {
+		if *req.DiskMB < project.Resources.DiskMB {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("disk size can only grow: current %d MB, requested %d MB",
+					project.Resources.DiskMB, *req.DiskMB))
+			return
+		}
+		project.Resources.DiskMB = *req.DiskMB
+		hasChanges = true
+	} else if req.Disk != nil {
+		diskMB, err := size.ParseSizeMB(*req.Disk)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid disk value: %v", err))
+			return
+		}
+		if diskMB < project.Resources.DiskMB {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("disk size can only grow: current %d MB, requested %d MB",
+					project.Resources.DiskMB, diskMB))
+			return
+		}
+		project.Resources.DiskMB = diskMB
+		hasChanges = true
+	}
+
+	if !hasChanges {
+		writeError(w, http.StatusBadRequest, "no changes specified")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	s.rt.LoadInstance(instance)
+
+	if err := s.rt.ResizeInstance(ctx, instance.ID, project); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to resize VM: %v", err))
+		return
+	}
+
+	if err := s.store.UpdateProject(project); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save project: %v", err))
+		return
+	}
+
+	s.logger.Printf("project updated: name=%s id=%s", project.Name, project.ID)
+
+	resp := ProjectResponse{
+		Project:  project,
+		Instance: instance,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ProjectLogsResponse wraps VM log output.
+type ProjectLogsResponse struct {
+	Logs string `json:"logs"`
+}
+
+func (s *Server) handleProjectLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireRuntime(w) {
+		return
+	}
+
+	id := r.PathValue("id")
+
+	project, err := s.store.GetProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
+		return
+	}
+
+	instance := s.store.GetInstance(project.ID)
+	if instance == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no VM instance for project %s", id))
+		return
+	}
+
+	source := r.URL.Query().Get("source")
+	lines := 100
+	if q := r.URL.Query().Get("lines"); q != "" {
+		if n, parseErr := strconv.Atoi(q); parseErr == nil && n > 0 {
+			lines = n
+		}
+	}
+
+	logFile := r.URL.Query().Get("file")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	s.rt.LoadInstance(instance)
+
+	logs, err := s.rt.GetVMLogs(ctx, instance.ID, source, logFile, lines)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get logs: %v", err))
+		return
+	}
+
+	s.logger.Printf("project logs: name=%s id=%s source=%s lines=%d", project.Name, project.ID, source, lines)
+	writeJSON(w, http.StatusOK, ProjectLogsResponse{Logs: strings.TrimRight(logs, "\n")})
 }

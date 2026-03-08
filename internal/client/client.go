@@ -81,6 +81,14 @@ func (c *Client) post(path string, reqBody, respBody any) error {
 	return c.doJSON(http.MethodPost, path, reqBody, respBody)
 }
 
+func (c *Client) put(path string, reqBody, respBody any) error {
+	return c.doJSON(http.MethodPut, path, reqBody, respBody)
+}
+
 func (c *Client) delete(path string) error {
 	return c.doJSON(http.MethodDelete, path, nil, nil)
+}
+
+func (c *Client) deleteWithBody(path string, reqBody, respBody any) error {
+	return c.doJSON(http.MethodDelete, path, reqBody, respBody)
 }

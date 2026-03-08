@@ -11,6 +11,11 @@ import (
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
+const (
+	statusYes = "yes"
+	statusNo  = "no"
+)
+
 // capabilitiesCmd prints host virtualization capabilities.
 var capabilitiesCmd = &cobra.Command{
 	Use:   "capabilities",
@@ -47,9 +52,9 @@ func formatCapabilities(caps *entities.HostCapabilities) string {
 	fmt.Fprintf(&b, "Hypervisor:    %s\n", caps.Hypervisor)
 	fmt.Fprintf(&b, "Architecture:  %s\n", caps.Arch)
 
-	kvmStatus := "yes"
+	kvmStatus := statusYes
 	if !caps.KVMAvailable {
-		kvmStatus = "no"
+		kvmStatus = statusNo
 	}
 	fmt.Fprintf(&b, "KVM:           %s\n", kvmStatus)
 

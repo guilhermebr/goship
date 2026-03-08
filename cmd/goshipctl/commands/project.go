@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	lvrt "github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
+	apiserver "github.com/guilhermebr/goship/internal/api"
 	"github.com/guilhermebr/goship/internal/shared/size"
 	"github.com/guilhermebr/goship/internal/vault"
 	v1 "github.com/guilhermebr/goship/pkg/api/v1"
@@ -527,23 +528,29 @@ func runProjectConsole(cmd *cobra.Command, args []string) error {
 	return syscall.Exec(virshPath, []string{"virsh", "console", instance.DomainName}, os.Environ())
 }
 
-//nolint:funlen // CLI handler with streaming logs and polling logic
+//nolint:funlen,gocognit // CLI handler with streaming logs and polling logic
 func runProjectLogs(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("project logs is not available in API mode")
-	}
-
 	name := args[0]
 
 	// Resolve log file: --file flag > positional alias > default (empty = agent default).
 	logFile := logsFile
+	source := ""
 	if logFile == "" && len(args) > 1 {
 		alias := args[1]
-		path, ok := logAliases[alias]
-		if !ok {
-			return fmt.Errorf("unknown log source %q (known: cloud-init, goship-init)", alias)
+		if apiClient != nil {
+			// In API mode, pass the source alias to the server.
+			source = alias
+		} else {
+			path, ok := logAliases[alias]
+			if !ok {
+				return fmt.Errorf("unknown log source %q (known: cloud-init, goship-init)", alias)
+			}
+			logFile = path
 		}
-		logFile = path
+	}
+
+	if apiClient != nil {
+		return runProjectLogsAPI(cmd, name, source, logFile)
 	}
 
 	project, err := store.GetProject(name)
@@ -612,6 +619,16 @@ func runProjectLogs(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runProjectLogsAPI(cmd *cobra.Command, name, source, logFile string) error {
+	logs, err := apiClient.GetProjectLogs(name, source, logFile, logsLines)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), logs)
+	return nil
+}
+
 // expandDataDir expands ~ in the data directory path.
 func expandDataDir(dir string) string {
 	if strings.HasPrefix(dir, "~/") {
@@ -625,11 +642,12 @@ func expandDataDir(dir string) string {
 
 //nolint:funlen // CLI handler with complex flag parsing and VM reconfiguration
 func runProjectEdit(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
 	if apiClient != nil {
-		return errors.New("project edit is not available in API mode")
+		return runProjectEditAPI(cmd, name)
 	}
 
-	name := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -707,6 +725,41 @@ func runProjectEdit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "\nStart the VM to apply changes: goshipctl project start %s\n", name)
 
+	return nil
+}
+
+func runProjectEditAPI(cmd *cobra.Command, name string) error {
+	req := apiserver.UpdateProjectRequest{}
+	hasChanges := false
+
+	if cmd.Flags().Changed("cpu") {
+		req.CPU = &projectEditCPU
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("memory") {
+		req.Memory = &projectEditMemory
+		hasChanges = true
+	}
+	if cmd.Flags().Changed("disk") {
+		req.Disk = &projectEditDisk
+		hasChanges = true
+	}
+
+	if !hasChanges {
+		return errors.New("no changes specified; use --cpu, --memory, or --disk flags (see --help)")
+	}
+
+	resp, err := apiClient.UpdateProject(name, req)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Project '%s' updated:\n", name)
+	fmt.Fprintf(out, "  CPU:    %.0f cores\n", resp.Resources.CPU)
+	fmt.Fprintf(out, "  Memory: %d MB\n", resp.Resources.MemoryMB)
+	fmt.Fprintf(out, "  Disk:   %d MB\n", resp.Resources.DiskMB)
+	fmt.Fprintf(out, "\nStart the VM to apply changes: goshipctl project start %s\n", name)
 	return nil
 }
 
@@ -837,17 +890,13 @@ func runProjectStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-//nolint:funlen // CLI handler with stop-wait-start sequence and API mode
 func runProjectRestart(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
 	if apiClient != nil {
-		if err := apiClient.StopProject(name); err != nil {
-			return fmt.Errorf("failed to stop project: %w", err)
-		}
-		resp, err := apiClient.StartProject(name)
+		resp, err := apiClient.RestartProject(name)
 		if err != nil {
-			return fmt.Errorf("failed to start project: %w", err)
+			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Project '%s' VM restarted\n", name)
 		if resp.Instance != nil && resp.Instance.IPAddress != "" {
@@ -928,11 +977,11 @@ const updateInitChunkSize = 512 * 1024 // 512KB
 
 //nolint:funlen,gocognit,gocyclo,cyclop // CLI handler with multi-phase chunked binary transfer
 func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
-	if apiClient != nil {
-		return errors.New("project update-init is not available in API mode")
-	}
-
 	name := args[0]
+
+	if apiClient != nil {
+		return runProjectUpdateInitAPI(cmd, name)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -1062,5 +1111,40 @@ func runProjectUpdateInit(cmd *cobra.Command, args []string) error {
 		return runProjectRestart(cmd, args)
 	}
 
+	return nil
+}
+
+func runProjectUpdateInitAPI(cmd *cobra.Command, name string) error {
+	// Resolve binary path.
+	binaryPath := updateInitBinary
+	if binaryPath == "" {
+		binaryPath = cfg.InitBinaryPath
+	}
+	binaryPath = expandDataDir(binaryPath)
+
+	f, err := os.Open(binaryPath)
+	if err != nil {
+		return fmt.Errorf("failed to open binary %s: %w", binaryPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat binary: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Uploading goship-init to project '%s' via API...\n", name)
+	fmt.Fprintf(out, "  Binary: %s (%d bytes)\n", binaryPath, stat.Size())
+
+	if err := apiClient.UpdateInit(name, f, stat.Size(), updateInitRestart); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "goship-init updated successfully in project '%s'\n", name)
+
+	if updateInitRestart {
+		fmt.Fprintln(out, "VM restart requested.")
+	}
 	return nil
 }

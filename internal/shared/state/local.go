@@ -24,9 +24,15 @@ const (
 
 // Store manages local state persistence.
 type Store struct {
-	path  string
-	state *entities.LocalState
-	mu    sync.RWMutex
+	path    string
+	dataDir string
+	state   *entities.LocalState
+	mu      sync.RWMutex
+}
+
+// DataDir returns the data directory used by this store.
+func (s *Store) DataDir() string {
+	return s.dataDir
 }
 
 // NewStore creates a new local state store.
@@ -48,8 +54,9 @@ func NewStore(dataDir string) (*Store, error) {
 	statePath := filepath.Join(dataDir, StateFileName)
 
 	store := &Store{
-		path:  statePath,
-		state: entities.NewLocalState(),
+		path:    statePath,
+		dataDir: dataDir,
+		state:   entities.NewLocalState(),
 	}
 
 	// Load existing state if present

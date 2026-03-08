@@ -752,6 +752,54 @@ func (r *Runtime) GetAppLogs(ctx context.Context, instanceID string, appName str
 	return resp.Logs, nil
 }
 
+// logAliases maps well-known names to log file paths inside the VM.
+var logAliases = map[string]string{
+	"cloud-init":  "/var/log/cloud-init-output.log",
+	"goship-init": "/var/log/goship-init.log",
+}
+
+// GetVMLogs retrieves log output from the VM itself (not a specific app).
+func (r *Runtime) GetVMLogs(
+	ctx context.Context, instanceID string, source string, logFile string, lines int,
+) (string, error) {
+	r.mu.RLock()
+	info, ok := r.instances[instanceID]
+	r.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	// Resolve log file path from source alias or explicit path.
+	resolvedFile := logFile
+	if resolvedFile == "" && source != "" {
+		path, ok := logAliases[source]
+		if !ok {
+			return "", fmt.Errorf("unknown log source %q (known: cloud-init, goship-init)", source)
+		}
+		resolvedFile = path
+	}
+
+	comm, err := NewVMCommunicator(info.socketPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to VM: %w", err)
+	}
+	defer func() { _ = comm.Close() }()
+
+	resp, err := comm.SendCommand(ctx, &v1.InitCommand{
+		Action:  v1.ActionLogs,
+		Lines:   lines,
+		LogFile: resolvedFile,
+	})
+	if err != nil {
+		return "", fmt.Errorf("logs command failed: %w", err)
+	}
+	if resp.Status != v1.StatusOK {
+		return "", fmt.Errorf("logs error: %s", resp.Error)
+	}
+
+	return resp.Logs, nil
+}
+
 // StreamLogs streams logs from an application inside a VM instance.
 func (r *Runtime) StreamLogs(
 	ctx context.Context,

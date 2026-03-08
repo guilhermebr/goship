@@ -3,6 +3,7 @@ package apiserver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -330,4 +331,104 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Printf("app logs: project=%s app=%s lines=%d", project.Name, name, lines)
 	writeJSON(w, http.StatusOK, AppLogsResponse{Logs: strings.TrimRight(logs, "\n")})
+}
+
+// UpdateAppRequest is the request body for updating an app.
+// All fields are pointers to distinguish between "not provided" and "zero value".
+type UpdateAppRequest struct {
+	Image         *string                `json:"image,omitempty"`
+	Binary        *string                `json:"binary,omitempty"`
+	Ports         []entities.PortMapping `json:"ports,omitempty"`
+	Env           map[string]string      `json:"env,omitempty"`
+	Description   *string                `json:"description,omitempty"`
+	Tags          []string               `json:"tags,omitempty"`
+	RestartPolicy *string                `json:"restart_policy,omitempty"`
+	CPU           *float64               `json:"cpu,omitempty"`
+	MemoryMB      *int64                 `json:"memory_mb,omitempty"`
+}
+
+//nolint:funlen // Handler applies many optional fields from request
+func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+
+	project, err := s.store.GetProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
+		return
+	}
+
+	app := s.store.GetApp(project.ID, name)
+	if app == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("app '%s' not found in project", name))
+		return
+	}
+
+	var req UpdateAppRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	hasChanges := false
+
+	if req.Image != nil {
+		app.Image = *req.Image
+		hasChanges = true
+	}
+	if req.Binary != nil {
+		app.Binary = *req.Binary
+		hasChanges = true
+	}
+	if req.Ports != nil {
+		app.Ports = req.Ports
+		hasChanges = true
+	}
+	if req.Env != nil {
+		if app.Env == nil {
+			app.Env = make(map[string]string)
+		}
+		maps.Copy(app.Env, req.Env)
+		hasChanges = true
+	}
+	if req.Description != nil {
+		app.Description = *req.Description
+		hasChanges = true
+	}
+	if req.Tags != nil {
+		app.Tags = req.Tags
+		hasChanges = true
+	}
+	if req.RestartPolicy != nil {
+		rp := entities.RestartPolicy(*req.RestartPolicy)
+		switch rp {
+		case entities.RestartPolicyNever, entities.RestartPolicyAlways, entities.RestartPolicyOnFailure:
+			app.RestartPolicy = rp
+			hasChanges = true
+		default:
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid restart_policy: %s", *req.RestartPolicy))
+			return
+		}
+	}
+	if req.CPU != nil {
+		app.Resources.CPU = *req.CPU
+		hasChanges = true
+	}
+	if req.MemoryMB != nil {
+		app.Resources.MemoryMB = *req.MemoryMB
+		hasChanges = true
+	}
+
+	if !hasChanges {
+		writeError(w, http.StatusBadRequest, "no changes specified")
+		return
+	}
+
+	if err := s.store.SetApp(project.ID, app); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save app: %v", err))
+		return
+	}
+
+	s.logger.Printf("app updated: project=%s app=%s", project.Name, name)
+	writeJSON(w, http.StatusOK, app)
 }
