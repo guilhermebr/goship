@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,18 @@ func newTestServerWithStore(t *testing.T) (*apiserver.Server, *state.Store) {
 	}
 	logger := log.New(log.Writer(), "test: ", 0)
 	return apiserver.New(store, nil, logger), store
+}
+
+// newTestServerWithLog creates a server that captures log output for assertions.
+func newTestServerWithLog(t *testing.T) (*apiserver.Server, *state.Store, *bytes.Buffer) {
+	t.Helper()
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+	return apiserver.New(store, nil, logger), store, &buf
 }
 
 func doRequest(srv *apiserver.Server, method, path string, body any) *httptest.ResponseRecorder {
@@ -431,5 +444,228 @@ func TestAppDeploy_NoRuntime(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- Logging tests ---
+
+func TestLogMiddleware_IncludesRemoteAddr(t *testing.T) {
+	srv, _, logBuf := newTestServerWithLog(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.RemoteAddr = "10.0.0.1:54321"
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "10.0.0.1:54321") {
+		t.Fatalf("expected log to contain remote addr, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "GET") {
+		t.Fatalf("expected log to contain method, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "/healthz") {
+		t.Fatalf("expected log to contain path, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "200") {
+		t.Fatalf("expected log to contain status 200, got: %s", logOutput)
+	}
+}
+
+func TestLogMiddleware_IncludesQueryString(t *testing.T) {
+	srv, store, logBuf := newTestServerWithLog(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	if err := store.SetApp(project.ID, &entities.AppSpec{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx:alpine",
+		Replicas:      1,
+		CreatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to set app: %v", err)
+	}
+
+	// Request app logs with query string (no runtime, so will 503).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/apps/web/logs?lines=50", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "?lines=50") {
+		t.Fatalf("expected log to contain query string, got: %s", logOutput)
+	}
+}
+
+func TestLogMiddleware_NoQueryString(t *testing.T) {
+	srv, _, logBuf := newTestServerWithLog(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "?") {
+		t.Fatalf("expected no query string in log, got: %s", logOutput)
+	}
+}
+
+func TestActionLog_ProjectList(t *testing.T) {
+	srv, store, logBuf := newTestServerWithLog(t)
+
+	if _, err := store.CreateProject(
+		"p1",
+		entities.RuntimeQEMU,
+		entities.Resources{CPU: 1, MemoryMB: 512},
+	); err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "projects listed: count=1") {
+		t.Fatalf("expected action log 'projects listed: count=1', got: %s", logOutput)
+	}
+}
+
+func TestActionLog_ProjectGet(t *testing.T) {
+	srv, store, logBuf := newTestServerWithLog(t)
+
+	project, err := store.CreateProject("my-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID, nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	logOutput := logBuf.String()
+	expected := "project info: name=my-project id=" + project.ID
+	if !strings.Contains(logOutput, expected) {
+		t.Fatalf("expected action log %q, got: %s", expected, logOutput)
+	}
+}
+
+func TestActionLog_AppCreate(t *testing.T) {
+	srv, store, logBuf := newTestServerWithLog(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	body := apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx:alpine",
+		Ports:         []entities.PortMapping{{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/apps", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "app created: project=test-project app=web mode=container") {
+		t.Fatalf("expected action log for app create, got: %s", logOutput)
+	}
+}
+
+func TestActionLog_AppList(t *testing.T) {
+	srv, store, logBuf := newTestServerWithLog(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	if err := store.SetApp(project.ID, &entities.AppSpec{
+		Name: "web", ExecutionMode: entities.ExecutionModeContainer, Image: "nginx", Replicas: 1, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to set app: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/apps", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "apps listed: project=test-project count=1") {
+		t.Fatalf("expected action log for app list, got: %s", logOutput)
+	}
+}
+
+func TestActionLog_AppGet(t *testing.T) {
+	srv, store, logBuf := newTestServerWithLog(t)
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	if err := store.SetApp(project.ID, &entities.AppSpec{
+		Name: "api", ExecutionMode: entities.ExecutionModeContainer, Image: "myapp", Replicas: 1, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to set app: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/apps/api", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "app info: project=test-project app=api") {
+		t.Fatalf("expected action log for app info, got: %s", logOutput)
+	}
+}
+
+func TestActionLog_NotOnError(t *testing.T) {
+	srv, _, logBuf := newTestServerWithLog(t)
+
+	// Request a nonexistent project — should NOT produce an action log.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/nonexistent", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "project info:") {
+		t.Fatalf("expected no action log on error, got: %s", logOutput)
 	}
 }
