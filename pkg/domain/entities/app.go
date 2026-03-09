@@ -117,6 +117,10 @@ type AppSpec struct {
 	RestartPolicy RestartPolicy `json:"restart_policy,omitempty"`
 	// Working directory
 	WorkingDir string `json:"working_dir,omitempty"`
+	// Hostname for reverse proxy routing (defaults to app name)
+	Hostname string `json:"hostname,omitempty"`
+	// Available controls whether the app gets external domain routes (default true)
+	Available *bool `json:"available,omitempty"`
 
 	// ==========================================================================
 	// Metadata fields
@@ -128,6 +132,21 @@ type AppSpec struct {
 	Tags []string `json:"tags,omitempty"`
 	// CreatedAt timestamp when the app was created
 	CreatedAt time.Time `json:"created_at,omitzero"`
+}
+
+// IsAvailable returns true if the app should get external domain routes.
+// Defaults to true when not explicitly set.
+func (a *AppSpec) IsAvailable() bool {
+	return a.Available == nil || *a.Available
+}
+
+// GetHostname returns the hostname for reverse proxy routing.
+// Defaults to the app name if not explicitly set.
+func (a *AppSpec) GetHostname() string {
+	if a.Hostname != "" {
+		return a.Hostname
+	}
+	return a.Name
 }
 
 // IsContainerMode returns true if the app runs as a container.

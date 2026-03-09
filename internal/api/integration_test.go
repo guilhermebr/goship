@@ -13,6 +13,7 @@ import (
 	mockrt "github.com/guilhermebr/goship/internal/agent/runtime/mock"
 	apiserver "github.com/guilhermebr/goship/internal/api"
 	"github.com/guilhermebr/goship/internal/client"
+	"github.com/guilhermebr/goship/internal/proxy"
 	"github.com/guilhermebr/goship/internal/shared/state"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -28,7 +29,7 @@ func newIntegrationServer(
 		t.Fatalf("failed to create store: %v", err)
 	}
 	logger := log.New(log.Writer(), "integration: ", 0)
-	srv := apiserver.New(store, rt, logger)
+	srv := apiserver.New(store, rt, logger, nil)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 	cl := client.New(ts.URL)
@@ -656,6 +657,24 @@ func testNameLookupWrites(
 	}
 }
 
+// newIntegrationServerWithRoutes creates a server with a proxy route table for testing.
+func newIntegrationServerWithRoutes(
+	t *testing.T, rt *mockrt.Runtime,
+) (*client.Client, *state.Store, *proxy.RouteTable) {
+	t.Helper()
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	routes := proxy.NewRouteTable()
+	logger := log.New(log.Writer(), "integration: ", 0)
+	srv := apiserver.New(store, rt, logger, routes)
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+	cl := client.New(ts.URL)
+	return cl, store, routes
+}
+
 // assertCallCount is a test helper that verifies the mock recorded
 // exactly the expected number of calls for a given method.
 func assertCallCount(
@@ -664,5 +683,492 @@ func assertCallCount(
 	t.Helper()
 	if got := len(rt.CallsFor(method)); got != expected {
 		t.Fatalf("expected %d %s calls, got %d", expected, method, got)
+	}
+}
+
+func TestIntegration_ProxyRoutes_DeployRegistersRoutes(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	// Create project with domains.
+	project := seedProjectWithInstance(
+		t, store, "proxy-test", "inst-proxy",
+		entities.InstanceStateRunning,
+	)
+	// Set an IP on the instance so routes can be computed.
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.10"
+	if err := store.UpdateInstance(inst); err != nil {
+		t.Fatalf("update instance: %v", err)
+	}
+	project.Domains = []string{"proxy-test.local"}
+	project.DefaultDomain = "proxy-test.local"
+	if err := store.UpdateProject(project); err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+
+	// Create and deploy app.
+	_, err := cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx:alpine",
+		Ports:         []entities.PortMapping{{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	_, err = cl.DeployApp(project.ID, "web", nil)
+	if err != nil {
+		t.Fatalf("DeployApp: %v", err)
+	}
+
+	// Verify route was registered.
+	backend, ok := routes.Lookup("web.proxy-test.local")
+	if !ok {
+		t.Fatal("expected route 'web.proxy-test.local' to be registered")
+	}
+	if backend != "192.168.122.10:8080" {
+		t.Fatalf("expected backend '192.168.122.10:8080', got %s", backend)
+	}
+}
+
+func TestIntegration_ProxyRoutes_StopRemovesRoutes(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "stop-routes", "inst-sr",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.20"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"stop-routes.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "api",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "myapi:latest",
+		Ports:         []entities.PortMapping{{HostPort: 3000, ContainerPort: 3000}},
+	})
+	_, _ = cl.DeployApp(project.ID, "api", nil)
+
+	// Route exists after deploy.
+	if _, ok := routes.Lookup("api.stop-routes.local"); !ok {
+		t.Fatal("expected route after deploy")
+	}
+
+	// Stop removes route.
+	if err := cl.StopApp(project.ID, "api"); err != nil {
+		t.Fatalf("StopApp: %v", err)
+	}
+	if _, ok := routes.Lookup("api.stop-routes.local"); ok {
+		t.Fatal("expected route to be removed after stop")
+	}
+}
+
+func TestIntegration_ProxyRoutes_DeleteRemovesRoutes(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "del-routes", "inst-dr",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.30"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"del-routes.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+	})
+	_, _ = cl.DeployApp(project.ID, "web", nil)
+
+	if _, ok := routes.Lookup("web.del-routes.local"); !ok {
+		t.Fatal("expected route after deploy")
+	}
+
+	// Delete app removes route.
+	if err := cl.DeleteApp(project.ID, "web"); err != nil {
+		t.Fatalf("DeleteApp: %v", err)
+	}
+	if _, ok := routes.Lookup("web.del-routes.local"); ok {
+		t.Fatal("expected route to be removed after delete")
+	}
+}
+
+func TestIntegration_ProxyRoutes_AvailableFalsePreventsRoute(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "avail-test", "inst-avail",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.40"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"avail-test.local"}
+	_ = store.UpdateProject(project)
+
+	avail := false
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "hidden",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+		Available:     &avail,
+	})
+	_, _ = cl.DeployApp(project.ID, "hidden", nil)
+
+	// Route should NOT be registered.
+	if _, ok := routes.Lookup("hidden.avail-test.local"); ok {
+		t.Fatal("expected no route for unavailable app")
+	}
+}
+
+func TestIntegration_ProxyRoutes_CustomHostname(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "host-test", "inst-host",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.50"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"host-test.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "backend",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "myapp",
+		Ports:         []entities.PortMapping{{HostPort: 5000, ContainerPort: 5000}},
+		Hostname:      "api",
+	})
+	_, _ = cl.DeployApp(project.ID, "backend", nil)
+
+	// Route uses custom hostname, not app name.
+	if _, ok := routes.Lookup("api.host-test.local"); !ok {
+		t.Fatal("expected route with custom hostname 'api'")
+	}
+	if _, ok := routes.Lookup("backend.host-test.local"); ok {
+		t.Fatal("should not have route with app name when custom hostname is set")
+	}
+}
+
+func TestIntegration_ProxyRoutes_ProjectDeleteCleansRoutes(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "proj-del-routes", "inst-pdr",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.60"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"proj-del.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+	})
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "api",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "myapi",
+		Ports:         []entities.PortMapping{{HostPort: 3000, ContainerPort: 3000}},
+	})
+	_, _ = cl.DeployApp(project.ID, "web", nil)
+	_, _ = cl.DeployApp(project.ID, "api", nil)
+
+	// Both routes exist.
+	if _, ok := routes.Lookup("web.proj-del.local"); !ok {
+		t.Fatal("expected web route")
+	}
+	if _, ok := routes.Lookup("api.proj-del.local"); !ok {
+		t.Fatal("expected api route")
+	}
+
+	// Delete project cleans both routes.
+	if err := cl.DeleteProject(project.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, ok := routes.Lookup("web.proj-del.local"); ok {
+		t.Fatal("expected web route removed after project delete")
+	}
+	if _, ok := routes.Lookup("api.proj-del.local"); ok {
+		t.Fatal("expected api route removed after project delete")
+	}
+}
+
+func TestIntegration_ProxyRoutes_RebuildOnStartup(t *testing.T) {
+	rt := mockrt.New()
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	// Seed a project with domains, an instance with IP, and an available app.
+	project, err := store.CreateProject(
+		"rebuild-test", entities.RuntimeQEMU,
+		entities.Resources{CPU: 1, MemoryMB: 512},
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	project.Domains = []string{"rebuild.local"}
+	project.DefaultDomain = "rebuild.local"
+	_ = store.UpdateProject(project)
+
+	inst := &entities.ProjectInstance{
+		ID:        "inst-rebuild",
+		ProjectID: project.ID,
+		State:     entities.InstanceStateRunning,
+		IPAddress: "10.0.0.5",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	_ = store.SetInstance(inst)
+
+	_ = store.SetApp(project.ID, &entities.AppSpec{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 8080, ContainerPort: 80}},
+		Replicas:      1,
+		CreatedAt:     time.Now(),
+	})
+
+	// Create server and call RebuildRoutes — simulates startup.
+	routes := proxy.NewRouteTable()
+	logger := log.New(log.Writer(), "rebuild-test: ", 0)
+	srv := apiserver.New(store, rt, logger, routes)
+	srv.RebuildRoutes()
+
+	backend, ok := routes.Lookup("web.rebuild.local")
+	if !ok {
+		t.Fatal("expected route to be rebuilt on startup")
+	}
+	if backend != "10.0.0.5:8080" {
+		t.Fatalf("expected backend '10.0.0.5:8080', got %s", backend)
+	}
+}
+
+func TestIntegration_ProxyRoutes_RebuildSkipsUnavailable(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	project, _ := store.CreateProject(
+		"rebuild-skip", entities.RuntimeQEMU,
+		entities.Resources{CPU: 1, MemoryMB: 512},
+	)
+	project.Domains = []string{"skip.local"}
+	_ = store.UpdateProject(project)
+	_ = store.SetInstance(&entities.ProjectInstance{
+		ID: "inst-skip", ProjectID: project.ID,
+		State: entities.InstanceStateRunning, IPAddress: "10.0.0.6",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+
+	avail := false
+	_ = store.SetApp(project.ID, &entities.AppSpec{
+		Name: "hidden", ExecutionMode: entities.ExecutionModeContainer,
+		Image: "nginx", Ports: []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+		Available: &avail, Replicas: 1, CreatedAt: time.Now(),
+	})
+
+	routes := proxy.NewRouteTable()
+	logger := log.New(log.Writer(), "rebuild-skip: ", 0)
+	rt := mockrt.New()
+	srv := apiserver.New(store, rt, logger, routes)
+	srv.RebuildRoutes()
+
+	if _, ok := routes.Lookup("hidden.skip.local"); ok {
+		t.Fatal("expected unavailable app to be skipped during rebuild")
+	}
+}
+
+func TestIntegration_ProxyRoutes_DomainChangeReconciles(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "domain-change", "inst-dc",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.70"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"old.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+	})
+	_, _ = cl.DeployApp(project.ID, "web", nil)
+
+	if _, ok := routes.Lookup("web.old.local"); !ok {
+		t.Fatal("expected route with old domain")
+	}
+
+	// Change domain.
+	_, err := cl.UpdateDomains(project.ID, apiserver.UpdateDomainsRequest{
+		Domains: []string{"new.local"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateDomains: %v", err)
+	}
+
+	// Old route should be gone, new route should exist.
+	if _, ok := routes.Lookup("web.old.local"); ok {
+		t.Fatal("expected old route to be removed after domain change")
+	}
+	if _, ok := routes.Lookup("web.new.local"); !ok {
+		t.Fatal("expected new route after domain change")
+	}
+}
+
+func TestIntegration_ProxyRoutes_DomainsClearedRemovesRoutes(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "domain-clear", "inst-dcl",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.71"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"clear.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+	})
+	_, _ = cl.DeployApp(project.ID, "web", nil)
+
+	if _, ok := routes.Lookup("web.clear.local"); !ok {
+		t.Fatal("expected route before clearing domains")
+	}
+
+	// Clear all domains.
+	_, err := cl.UpdateDomains(project.ID, apiserver.UpdateDomainsRequest{
+		Domains: []string{},
+	})
+	if err != nil {
+		t.Fatalf("UpdateDomains: %v", err)
+	}
+	if _, ok := routes.Lookup("web.clear.local"); ok {
+		t.Fatal("expected route removed after clearing domains")
+	}
+}
+
+func TestIntegration_ProxyRoutes_AppUpdateHostnameReconciles(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "app-host-change", "inst-ahc",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.80"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"ahc.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "svc",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "myapp",
+		Ports:         []entities.PortMapping{{HostPort: 3000, ContainerPort: 3000}},
+	})
+	_, _ = cl.DeployApp(project.ID, "svc", nil)
+
+	if _, ok := routes.Lookup("svc.ahc.local"); !ok {
+		t.Fatal("expected route with default hostname")
+	}
+
+	// Change hostname.
+	newHost := "api"
+	_, err := cl.UpdateApp(project.ID, "svc", apiserver.UpdateAppRequest{Hostname: &newHost})
+	if err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+
+	if _, ok := routes.Lookup("svc.ahc.local"); ok {
+		t.Fatal("expected old hostname route removed")
+	}
+	if _, ok := routes.Lookup("api.ahc.local"); !ok {
+		t.Fatal("expected new hostname route registered")
+	}
+}
+
+func TestIntegration_ProxyRoutes_AppUpdateAvailableReconciles(t *testing.T) {
+	rt := mockrt.New()
+	cl, store, routes := newIntegrationServerWithRoutes(t, rt)
+
+	project := seedProjectWithInstance(
+		t, store, "app-avail-change", "inst-aac",
+		entities.InstanceStateRunning,
+	)
+	inst := store.GetInstance(project.ID)
+	inst.IPAddress = "192.168.122.90"
+	_ = store.UpdateInstance(inst)
+	project.Domains = []string{"aac.local"}
+	_ = store.UpdateProject(project)
+
+	_, _ = cl.CreateApp(project.ID, apiserver.CreateAppRequest{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx",
+		Ports:         []entities.PortMapping{{HostPort: 80, ContainerPort: 80}},
+	})
+	_, _ = cl.DeployApp(project.ID, "web", nil)
+
+	if _, ok := routes.Lookup("web.aac.local"); !ok {
+		t.Fatal("expected route after deploy")
+	}
+
+	// Set available=false.
+	avail := false
+	_, err := cl.UpdateApp(project.ID, "web", apiserver.UpdateAppRequest{Available: &avail})
+	if err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+	if _, ok := routes.Lookup("web.aac.local"); ok {
+		t.Fatal("expected route removed after setting available=false")
+	}
+
+	// Set available=true — route should come back.
+	avail = true
+	_, err = cl.UpdateApp(project.ID, "web", apiserver.UpdateAppRequest{Available: &avail})
+	if err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+	if _, ok := routes.Lookup("web.aac.local"); !ok {
+		t.Fatal("expected route restored after setting available=true")
 	}
 }

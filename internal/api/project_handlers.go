@@ -14,8 +14,10 @@ import (
 
 // CreateProjectRequest is the request body for creating a project.
 type CreateProjectRequest struct {
-	Name      string             `json:"name"`
-	Resources entities.Resources `json:"resources"`
+	Name          string             `json:"name"`
+	Resources     entities.Resources `json:"resources"`
+	Domains       []string           `json:"domains,omitempty"`
+	DefaultDomain string             `json:"default_domain,omitempty"`
 }
 
 // ProjectResponse is a project with its instance and apps attached.
@@ -56,6 +58,18 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create project: %v", err))
 		return
+	}
+
+	if len(req.Domains) > 0 {
+		project.Domains = req.Domains
+		if req.DefaultDomain != "" {
+			project.DefaultDomain = req.DefaultDomain
+		} else {
+			project.DefaultDomain = req.Domains[0]
+		}
+		if updateErr := s.store.UpdateProject(project); updateErr != nil {
+			s.logger.Printf("failed to save project domains: %v", updateErr)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
@@ -116,6 +130,11 @@ func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
 		return
+	}
+
+	// Remove proxy routes for all apps in this project.
+	for _, app := range s.store.GetApps(project.ID) {
+		s.removeAppRoutes(project, app)
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
@@ -468,4 +487,76 @@ func (s *Server) handleProjectLogs(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Printf("project logs: name=%s id=%s source=%s lines=%d", project.Name, project.ID, source, lines)
 	writeJSON(w, http.StatusOK, ProjectLogsResponse{Logs: strings.TrimRight(logs, "\n")})
+}
+
+// UpdateDomainsRequest is the request body for updating project domains.
+type UpdateDomainsRequest struct {
+	Domains       []string `json:"domains"`
+	DefaultDomain string   `json:"default_domain,omitempty"`
+}
+
+// handleDomainsUpdate updates the domains assigned to a project.
+func (s *Server) handleDomainsUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	project, err := s.store.GetProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("project not found: %s", id))
+		return
+	}
+
+	var req UpdateDomainsRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Remove routes for old domains before updating.
+	oldDomains := project.Domains
+
+	project.Domains = req.Domains
+	switch {
+	case req.DefaultDomain != "":
+		project.DefaultDomain = req.DefaultDomain
+	case len(req.Domains) > 0:
+		project.DefaultDomain = req.Domains[0]
+	default:
+		project.DefaultDomain = ""
+	}
+
+	if err := s.store.UpdateProject(project); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save project: %v", err))
+		return
+	}
+
+	// Reconcile proxy routes: remove old domain routes, add new ones.
+	s.reconcileRoutesOnDomainChange(project, oldDomains)
+
+	s.logger.Printf("project domains updated: name=%s domains=%v", project.Name, project.Domains)
+	writeJSON(w, http.StatusOK, project)
+}
+
+// reconcileRoutesOnDomainChange removes routes for old domains and re-registers
+// routes for new domains across all apps in the project.
+func (s *Server) reconcileRoutesOnDomainChange(project *entities.Project, oldDomains []string) {
+	if s.proxyRoutes == nil {
+		return
+	}
+	apps := s.store.GetApps(project.ID)
+	// Remove routes using old domains.
+	for _, app := range apps {
+		hostname := app.GetHostname()
+		for _, domain := range oldDomains {
+			route := fmt.Sprintf("%s.%s", hostname, domain)
+			s.proxyRoutes.Delete(route)
+		}
+	}
+	// Re-register routes with new domains if instance is running.
+	instance := s.store.GetInstance(project.ID)
+	if instance == nil || instance.IPAddress == "" {
+		return
+	}
+	for _, app := range apps {
+		s.registerAppRoutes(project, app, instance.IPAddress)
+	}
 }

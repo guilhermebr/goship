@@ -77,6 +77,15 @@ func (c *Client) UpdateProject(
 	return &resp, nil
 }
 
+// UpdateDomains updates a project's domain configuration.
+func (c *Client) UpdateDomains(idOrName string, req apiserver.UpdateDomainsRequest) (*entities.Project, error) {
+	var resp entities.Project
+	if err := c.put(fmt.Sprintf("/api/v1/projects/%s/domains", idOrName), req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // GetProjectLogs returns VM logs for a project.
 func (c *Client) GetProjectLogs(idOrName, source, logFile string, lines int) (string, error) {
 	path := fmt.Sprintf("/api/v1/projects/%s/logs?lines=%d", idOrName, lines)

@@ -21,7 +21,7 @@ func (c *Client) SetEnv(idOrName string, env map[string]string, secret bool) (*a
 
 // ListEnv returns environment variables for a project.
 //
-//nolint:revive // showValues is a query param toggle, not a control flag
+//nolint:revive // showValues is a query param toggle
 func (c *Client) ListEnv(idOrName string, showValues bool) (*apiserver.EnvResponse, error) {
 	path := fmt.Sprintf("/api/v1/projects/%s/env", idOrName)
 	if showValues {

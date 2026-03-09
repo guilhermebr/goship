@@ -18,16 +18,13 @@ GoShip is built incrementally. This roadmap lists what has shipped and what is p
 - [x] Environment variables — project-level env vars with AES-256-GCM vault encryption for secrets
 - [x] REST API server (`goshipd`) with project and app endpoints
 - [x] CLI HTTP client — `GOSHIP_API_URL` enables API mode with backward-compatible fallback
+- [x] Reverse proxy — domain-based HTTP routing to VM apps, automatic route lifecycle
 
 ---
 
 ## API & CLI
 
 - [ ] Security — API key authentication, TLS
-
-## Networking
-
-- [ ] Reverse proxy with domain-based routing to VM ports
 
 ## Multi-Node
 

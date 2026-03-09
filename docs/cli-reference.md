@@ -15,6 +15,18 @@ These flags apply to all commands:
 | `--install-docker` | `true` | Install Docker during guest provisioning |
 | `--api-url` | *(empty)* | GoShip API server URL (env: `GOSHIP_API_URL`). When set, CLI uses HTTP instead of direct libvirt |
 
+### `goshipd` Configuration
+
+`goshipd` is configured via environment variables (using `ardanlabs/conf`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOSHIP_ADDR` | `:8080` | API server listen address |
+| `GOSHIP_PROXY_ADDR` | `:8081` | Reverse proxy listen address |
+| `GOSHIP_DATA_DIR` | `~/.goship` | Data directory |
+| `GOSHIP_INIT_BINARY_PATH` | `./bin/goship-init` | Path to goship-init binary |
+| `GOSHIP_LIBVIRT_URI` | `qemu:///system` | Libvirt connection URI |
+
 ### API Mode
 
 When `--api-url` (or `GOSHIP_API_URL`) is set, `goshipctl` talks to a running `goshipd` server over HTTP instead of calling libvirt directly. This enables remote management without requiring libvirt on the client machine.
@@ -364,6 +376,8 @@ goshipctl app create <project> <appname> [flags]
 | `-d, --description` | | App description |
 | `-g, --tag` | | Tags (repeatable) |
 | `--restart-policy` | `never` | Restart policy: `never`, `always`, or `on-failure` |
+| `--hostname` | *(app name)* | Hostname for reverse proxy routing (default: app name) |
+| `--available` | `true` | Whether the app is routable via the reverse proxy |
 
 **Examples:**
 
@@ -565,3 +579,44 @@ goshipctl vm ping myvm
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--data-dir` | `~/.goship` | Data directory |
+
+---
+
+## API Endpoints (goshipd)
+
+When running `goshipd`, the following additional endpoints are available for reverse proxy management:
+
+### Project Domains
+
+**`PUT /api/v1/projects/{id}/domains`** — Update domains assigned to a project.
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/projects/myapp/domains \
+  -d '{"domains":["myapp.local","myapp.dev"],"default_domain":"myapp.local"}'
+```
+
+### Proxy Routes
+
+**`GET /api/v1/proxy/routes`** — List all active proxy routes.
+
+```bash
+curl http://localhost:8080/api/v1/proxy/routes
+```
+
+**Example response:**
+
+```json
+[
+  {"domain": "web.myapp.local", "backend": "192.168.122.10:8080"},
+  {"domain": "api.myapp.local", "backend": "192.168.122.10:3000"}
+]
+```
+
+### App Update (Proxy Fields)
+
+**`PATCH /api/v1/projects/{id}/apps/{name}`** — Update app fields including hostname and available.
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/projects/myapp/apps/web \
+  -d '{"hostname":"www","available":true}'
+```

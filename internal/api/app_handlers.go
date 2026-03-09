@@ -23,6 +23,8 @@ type CreateAppRequest struct {
 	Resources     entities.Resources     `json:"resources"`
 	RestartPolicy entities.RestartPolicy `json:"restart_policy,omitempty"`
 	Replicas      int                    `json:"replicas,omitempty"`
+	Hostname      string                 `json:"hostname,omitempty"`
+	Available     *bool                  `json:"available,omitempty"`
 }
 
 // DeployAppRequest is the request body for deploying an app.
@@ -113,6 +115,8 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		Env:           req.Env,
 		Resources:     req.Resources,
 		RestartPolicy: restartPolicy,
+		Hostname:      req.Hostname,
+		Available:     req.Available,
 		CreatedAt:     time.Now(),
 	}
 
@@ -202,6 +206,8 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.registerAppRoutes(project, app, instance.IPAddress)
+
 	s.logger.Printf("app deployed: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, app)
 }
@@ -220,7 +226,8 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if app := s.store.GetApp(project.ID, name); app == nil {
+	app := s.store.GetApp(project.ID, name)
+	if app == nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("app '%s' not found in project", name))
 		return
 	}
@@ -241,6 +248,8 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.removeAppRoutes(project, app)
+
 	s.logger.Printf("app stopped: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
@@ -259,10 +268,13 @@ func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if app := s.store.GetApp(project.ID, name); app == nil {
+	app := s.store.GetApp(project.ID, name)
+	if app == nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("app '%s' not found in project", name))
 		return
 	}
+
+	s.removeAppRoutes(project, app)
 
 	instance := s.store.GetInstance(project.ID)
 	if instance != nil {
@@ -345,9 +357,11 @@ type UpdateAppRequest struct {
 	RestartPolicy *string                `json:"restart_policy,omitempty"`
 	CPU           *float64               `json:"cpu,omitempty"`
 	MemoryMB      *int64                 `json:"memory_mb,omitempty"`
+	Hostname      *string                `json:"hostname,omitempty"`
+	Available     *bool                  `json:"available,omitempty"`
 }
 
-//nolint:funlen // Handler applies many optional fields from request
+//nolint:funlen,cyclop,gocyclo // Handler applies many optional fields from request
 func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
@@ -418,6 +432,16 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 		app.Resources.MemoryMB = *req.MemoryMB
 		hasChanges = true
 	}
+	oldHostname := app.GetHostname()
+
+	if req.Hostname != nil {
+		app.Hostname = *req.Hostname
+		hasChanges = true
+	}
+	if req.Available != nil {
+		app.Available = req.Available
+		hasChanges = true
+	}
 
 	if !hasChanges {
 		writeError(w, http.StatusBadRequest, "no changes specified")
@@ -429,6 +453,57 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reconcile proxy routes if hostname or available changed.
+	if req.Hostname != nil || req.Available != nil {
+		s.reconcileAppRoutes(project, app, oldHostname)
+	}
+
 	s.logger.Printf("app updated: project=%s app=%s", project.Name, name)
 	writeJSON(w, http.StatusOK, app)
+}
+
+// registerAppRoutes adds proxy routes for an app across all project domains.
+func (s *Server) registerAppRoutes(project *entities.Project, app *entities.AppSpec, instanceIP string) {
+	if s.proxyRoutes == nil || !app.IsAvailable() || len(project.Domains) == 0 || len(app.Ports) == 0 {
+		return
+	}
+	backend := fmt.Sprintf("%s:%d", instanceIP, app.Ports[0].HostPort)
+	hostname := app.GetHostname()
+	for _, domain := range project.Domains {
+		route := fmt.Sprintf("%s.%s", hostname, domain)
+		s.proxyRoutes.Set(route, backend)
+		s.logger.Printf("proxy route added: %s -> %s", route, backend)
+	}
+}
+
+// reconcileAppRoutes removes old routes (using the previous hostname) and
+// re-registers new ones when an app's hostname or available flag changes.
+func (s *Server) reconcileAppRoutes(project *entities.Project, app *entities.AppSpec, oldHostname string) {
+	if s.proxyRoutes == nil || len(project.Domains) == 0 {
+		return
+	}
+	// Remove old routes using the previous hostname.
+	for _, domain := range project.Domains {
+		route := fmt.Sprintf("%s.%s", oldHostname, domain)
+		s.proxyRoutes.Delete(route)
+	}
+	// Re-register with new values if instance is running.
+	instance := s.store.GetInstance(project.ID)
+	if instance == nil || instance.IPAddress == "" {
+		return
+	}
+	s.registerAppRoutes(project, app, instance.IPAddress)
+}
+
+// removeAppRoutes removes proxy routes for an app across all project domains.
+func (s *Server) removeAppRoutes(project *entities.Project, app *entities.AppSpec) {
+	if s.proxyRoutes == nil || len(project.Domains) == 0 {
+		return
+	}
+	hostname := app.GetHostname()
+	for _, domain := range project.Domains {
+		route := fmt.Sprintf("%s.%s", hostname, domain)
+		s.proxyRoutes.Delete(route)
+		s.logger.Printf("proxy route removed: %s", route)
+	}
 }

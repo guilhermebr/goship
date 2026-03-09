@@ -6,24 +6,27 @@ import (
 	"time"
 
 	"github.com/guilhermebr/goship/internal/agent/runtime"
+	"github.com/guilhermebr/goship/internal/proxy"
 	"github.com/guilhermebr/goship/internal/shared/state"
 )
 
 // Server is the GoShip REST API server.
 type Server struct {
-	store  *state.Store
-	rt     runtime.ProjectRuntime
-	mux    *http.ServeMux
-	logger *log.Logger
+	store       *state.Store
+	rt          runtime.ProjectRuntime
+	proxyRoutes *proxy.RouteTable
+	mux         *http.ServeMux
+	logger      *log.Logger
 }
 
 // New creates a new API server and registers all routes.
-func New(store *state.Store, rt runtime.ProjectRuntime, logger *log.Logger) *Server {
+func New(store *state.Store, rt runtime.ProjectRuntime, logger *log.Logger, routes *proxy.RouteTable) *Server {
 	s := &Server{
-		store:  store,
-		rt:     rt,
-		mux:    http.NewServeMux(),
-		logger: logger,
+		store:       store,
+		rt:          rt,
+		proxyRoutes: routes,
+		mux:         http.NewServeMux(),
+		logger:      logger,
 	}
 	s.routes()
 	return s
@@ -51,8 +54,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/v1/projects/{id}/env", s.logMiddleware(s.handleEnvSet))
 	s.mux.HandleFunc("GET /api/v1/projects/{id}/env", s.logMiddleware(s.handleEnvList))
 	s.mux.HandleFunc("DELETE /api/v1/projects/{id}/env", s.logMiddleware(s.handleEnvDelete))
+	s.mux.HandleFunc("PUT /api/v1/projects/{id}/domains", s.logMiddleware(s.handleDomainsUpdate))
 	s.mux.HandleFunc("POST /api/v1/projects/{id}/push-image", s.logMiddleware(s.handlePushImage))
 	s.mux.HandleFunc("POST /api/v1/projects/{id}/update-init", s.logMiddleware(s.handleUpdateInit))
+
+	// Proxy
+	s.mux.HandleFunc("GET /api/v1/proxy/routes", s.logMiddleware(s.handleProxyRoutes))
 
 	// Apps
 	s.mux.HandleFunc("PUT /api/v1/projects/{id}/apps/{name}", s.logMiddleware(s.handleAppUpdate))
@@ -89,6 +96,36 @@ type statusRecorder struct {
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
 	sr.ResponseWriter.WriteHeader(code)
+}
+
+// handleProxyRoutes returns all active proxy routes.
+func (s *Server) handleProxyRoutes(w http.ResponseWriter, _ *http.Request) {
+	if s.proxyRoutes == nil {
+		writeJSON(w, http.StatusOK, []proxy.Route{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.proxyRoutes.All())
+}
+
+// RebuildRoutes scans the state store and re-populates the proxy route table
+// for all running instances that have apps with domains. Call this on startup
+// so routes survive a goshipd restart.
+func (s *Server) RebuildRoutes() {
+	if s.proxyRoutes == nil {
+		return
+	}
+	for _, project := range s.store.ListProjects() {
+		if len(project.Domains) == 0 {
+			continue
+		}
+		instance := s.store.GetInstance(project.ID)
+		if instance == nil || instance.IPAddress == "" {
+			continue
+		}
+		for _, app := range s.store.GetApps(project.ID) {
+			s.registerAppRoutes(project, app, instance.IPAddress)
+		}
+	}
 }
 
 // logMiddleware wraps a handler with request logging.

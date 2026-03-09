@@ -32,6 +32,10 @@ GoShip is built around a simple model:
 ┌─────────────────────────────────────────────────────────┐
 │                  GoShip Control Plane                   │
 │         (Projects, Apps, Nodes, Desired State)          │
+│                                                         │
+│   goshipd (:8080)          goship-proxy (:8081)         │
+│   REST API                 Reverse Proxy                │
+│   (manage projects/apps)   (route HTTP to VM apps)      │
 └───────────────────────────┬─────────────────────────────┘
                             │
                     Desired State
@@ -84,6 +88,7 @@ GoShip is built around a simple model:
 - **Environment variables** — Project-level env vars inherited by all apps, with AES-256-GCM vault encryption for secrets
 - **REST API server** — `goshipd` serves a JSON API for project and app management
 - **API mode CLI** — Set `GOSHIP_API_URL` to use `goshipctl` against a remote `goshipd` instead of local libvirt
+- **Reverse proxy** — Domain-based HTTP routing to apps inside VMs, with automatic route lifecycle management
 
 ---
 
@@ -127,7 +132,12 @@ goshipctl env list myapp
 goshipd &
 export GOSHIP_API_URL=http://localhost:8080
 
+# Assign domains for reverse proxy routing (API mode)
+curl -X PUT http://localhost:8080/api/v1/projects/myapp/domains \
+  -d '{"domains":["myapp.local"]}'
+
 # Deploy a container app (inherits project env vars)
+# After deploy, accessible at web.myapp.local:8081 via reverse proxy
 goshipctl app create myapp web --image nginx:alpine --port 8080:80
 goshipctl app deploy myapp web
 

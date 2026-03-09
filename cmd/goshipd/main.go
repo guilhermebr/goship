@@ -17,6 +17,7 @@ import (
 	"github.com/guilhermebr/goship/internal/agent/runtime"
 	"github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 	apiserver "github.com/guilhermebr/goship/internal/api"
+	"github.com/guilhermebr/goship/internal/proxy"
 	"github.com/guilhermebr/goship/internal/shared/state"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -29,6 +30,7 @@ var (
 
 type Config struct {
 	Addr               string `conf:"default::8080"`
+	ProxyAddr          string `conf:"default::8081"`
 	DataDir            string `conf:"default:~/.goship"`
 	InitBinaryPath     string `conf:"default:./bin/goship-init"`
 	SkipGuestProvision bool   `conf:"default:false"`
@@ -102,14 +104,25 @@ func run() error {
 	// Reconcile state with libvirt on startup.
 	reconcileState(store, rt, logger)
 
-	// Create API server.
-	srv := apiserver.New(store, rt, logger)
+	// Create route table and API server.
+	routes := proxy.NewRouteTable()
+	srv := apiserver.New(store, rt, logger, routes)
+	srv.RebuildRoutes()
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	// Start reverse proxy.
+	proxyServer := proxy.New(cfg.ProxyAddr, routes)
+	go func() {
+		logger.Printf("proxy listening on %s", cfg.ProxyAddr)
+		if proxyErr := proxyServer.ListenAndServe(); proxyErr != nil && !errors.Is(proxyErr, http.ErrServerClosed) {
+			logger.Printf("proxy error: %v", proxyErr)
+		}
+	}()
 
 	// Start server in a goroutine.
 	errCh := make(chan error, 1)
@@ -134,6 +147,10 @@ func run() error {
 	// Graceful shutdown with 10s timeout.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
+
+	if err := proxyServer.Close(); err != nil {
+		logger.Printf("failed to close proxy: %v", err)
+	}
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("failed to shutdown server: %w", err)

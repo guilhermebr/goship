@@ -22,7 +22,7 @@ func newTestServer(t *testing.T) *apiserver.Server {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	logger := log.New(log.Writer(), "test: ", 0)
-	return apiserver.New(store, nil, logger)
+	return apiserver.New(store, nil, logger, nil)
 }
 
 func newTestServerWithStore(t *testing.T) (*apiserver.Server, *state.Store) {
@@ -32,7 +32,7 @@ func newTestServerWithStore(t *testing.T) (*apiserver.Server, *state.Store) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	logger := log.New(log.Writer(), "test: ", 0)
-	return apiserver.New(store, nil, logger), store
+	return apiserver.New(store, nil, logger, nil), store
 }
 
 // newTestServerWithLog creates a server that captures log output for assertions.
@@ -44,7 +44,7 @@ func newTestServerWithLog(t *testing.T) (*apiserver.Server, *state.Store, *bytes
 	}
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
-	return apiserver.New(store, nil, logger), store, &buf
+	return apiserver.New(store, nil, logger, nil), store, &buf
 }
 
 func doRequest(srv *apiserver.Server, method, path string, body any) *httptest.ResponseRecorder {

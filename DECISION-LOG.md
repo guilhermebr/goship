@@ -401,6 +401,50 @@ Each entry follows a lightweight ADR (Architecture Decision Record) format: a on
 
 ---
 
+## Reverse Proxy (Mar 8, 2026)
+
+### ADR-041: Domains belong to projects, not apps
+
+- **Decision**: Projects own one or more domain names (e.g., `["myapp.local"]`). Apps specify a hostname (default: app name). Routes are computed as `{hostname}.{domain}` → `{VM_IP}:{port}`.
+- **Context**: Apps inside VMs need human-friendly URLs. The routing model needs to decide where domain ownership lives — at the project level or the app level.
+- **Alternatives considered**: Per-app domains (each app gets its own domain); flat domain-to-app mapping (single domain per app, no hierarchy).
+- **Rationale**: Project-level domains match the isolation model — a project owns a VM, and all apps in that project share the same VM IP. Multiple apps share a domain namespace naturally (e.g., `web.myapp.local`, `api.myapp.local`). Per-app domains would duplicate configuration and break the project-as-boundary model. The hostname field lets apps customize their subdomain without affecting other apps.
+- **Status**: Accepted
+
+### ADR-042: Separate proxy server on its own port
+
+- **Decision**: The reverse proxy listens on `:8081` (configurable via `GOSHIP_PROXY_ADDR`), separate from the API server on `:8080`.
+- **Context**: GoShip needs to serve both API requests (project/app management) and proxied application traffic. These could share a port with Host-based routing or use separate ports.
+- **Alternatives considered**: Single port with Host-based routing (API on `api.goship.local`, proxy on everything else); path-prefix routing (`/api/` for management, everything else proxied).
+- **Rationale**: Clean separation — API traffic never competes with proxied traffic. The proxy can be fronted by its own load balancer or firewall rules. It's simpler to reason about: port 8080 is always management, port 8081 is always application traffic. No risk of Host header conflicts between API and proxy routing.
+- **Status**: Accepted
+
+### ADR-043: In-memory route table rebuilt on startup
+
+- **Decision**: Routes are not persisted separately. The route table (`sync.RWMutex` + `map[string]string`) is rebuilt from the state store on `goshipd` startup via `RebuildRoutes()`.
+- **Context**: The proxy needs a fast lookup table mapping domain names to backend addresses. This data could be persisted separately or derived from existing state.
+- **Alternatives considered**: Persist routes to a separate file; add a `routes` field to `state.json`; use a shared cache like Redis.
+- **Rationale**: The state store already contains all data needed to compute routes: project domains, app hostnames, instance IPs, and port mappings. Deriving routes avoids double-write consistency issues — there's no risk of the route table and state store disagreeing. Rebuild is O(projects × apps), which is negligible at Phase 0 scale. The `sync.RWMutex` provides thread safety for concurrent reads from the proxy and writes from API handlers.
+- **Status**: Accepted
+
+### ADR-044: Available flag with `*bool` (default true)
+
+- **Decision**: `AppSpec.Available` is a `*bool` field. `nil` means available (default), `false` prevents route registration in the proxy.
+- **Context**: Some apps are internal services (databases, caches) that should not be exposed via the reverse proxy. A mechanism is needed to control which apps get external routes.
+- **Alternatives considered**: Separate `external` boolean field; enum with `available`/`internal`/`disabled` states.
+- **Rationale**: `*bool` with nil-means-true is the simplest representation. Apps are external by default because that's the most common case — users deploy web services they want to access. Internal-only services (databases, background workers) opt out explicitly with `"available": false`. The `IsAvailable()` method encapsulates the nil-means-true logic.
+- **Status**: Accepted
+
+### ADR-045: Route reconciliation on domain and hostname changes
+
+- **Decision**: Updating project domains or an app's hostname/available flag immediately reconciles proxy routes via `reconcileRoutesOnDomainChange()` and `reconcileAppRoutes()`.
+- **Context**: When a user changes a project's domain list or an app's hostname, the proxy route table must reflect the change. Routes could be reconciled immediately or deferred until the next deploy.
+- **Alternatives considered**: Require explicit `rebuild-routes` command; only reconcile on deploy; periodic reconciliation timer.
+- **Rationale**: Immediate reconciliation prevents stale routes. If a user changes a project's domain from `myapp.local` to `myapp.dev`, they expect the new domain to work immediately — requiring a redeploy would be confusing. The reconciliation is simple: remove old routes, add new ones. The two-phase approach (remove all old, then re-register all new) handles additions, removals, and changes in a single pass.
+- **Status**: Accepted
+
+---
+
 ## Summary of Superseded Decisions
 
 | Original | Superseded by | What changed |

@@ -54,6 +54,10 @@ type Project struct {
 	State ProjectState `json:"state"`
 	// Labels for organization
 	Labels map[string]string `json:"labels,omitempty"`
+	// Domains assigned to this project for reverse proxy routing.
+	Domains []string `json:"domains,omitempty"`
+	// DefaultDomain is the primary domain used when no specific domain is specified.
+	DefaultDomain string `json:"default_domain,omitempty"`
 	// Env holds project-level environment variables (inherited by all apps).
 	// Values prefixed with "encrypted:" are vault-encrypted secrets.
 	Env map[string]string `json:"env,omitempty"`

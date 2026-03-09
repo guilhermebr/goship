@@ -24,6 +24,8 @@ Projects have:
 - **Name** — unique identifier (e.g., `myapp`)
 - **Resources** — CPU cores, memory (MB), and disk (MB) allocated to the VM
 - **State** — lifecycle state of the project
+- **Domains** — one or more domain names for reverse proxy routing (e.g., `["myapp.local"]`)
+- **Default domain** — primary domain used when none is specified
 
 Project states:
 
@@ -84,6 +86,40 @@ Process mode apps support restart policies:
 | `never` | Process is not restarted if it exits |
 | `always` | Always restart, with exponential backoff (1s, 2s, 4s, ... up to 60s) |
 | `on-failure` | Restart only on non-zero exit codes, with exponential backoff |
+
+## Reverse Proxy
+
+GoShip includes a built-in HTTP reverse proxy that routes requests to apps inside VMs based on the `Host` header. This eliminates the need to know VM IP addresses — apps are accessible at human-friendly domain names.
+
+### Routing Model
+
+Routes follow the pattern `{hostname}.{domain}` → `{VM_IP}:{port}`:
+
+- **Domains** are set on the project (e.g., `myapp.local`)
+- **Hostname** defaults to the app name, but can be customized per app
+- **Port** is the first host port from the app's port mappings
+
+For example, a project with domain `myapp.local` and an app named `web` with port `8080:80` produces the route `web.myapp.local` → `192.168.122.10:8080`.
+
+### Available Flag
+
+Apps are externally routable by default. To prevent an app from being registered in the proxy (e.g., internal databases or background workers), set `available` to `false`. The `Available` field is a `*bool` — `nil` means available (default true).
+
+### Route Lifecycle
+
+- **Registered** when an app is deployed (`app deploy`)
+- **Removed** when an app is stopped or deleted (`app stop`, `app delete`)
+- **Reconciled** when project domains or app hostname/available change
+- **Rebuilt** from state on `goshipd` startup
+
+### Proxy Server
+
+The proxy listens on a separate port (default `:8081`, configurable via `GOSHIP_PROXY_ADDR`). This keeps API traffic (`:8080`) cleanly separated from proxied application traffic.
+
+```bash
+# Access an app through the proxy
+curl http://web.myapp.local:8081/
+```
 
 ## Architecture
 
