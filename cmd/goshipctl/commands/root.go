@@ -90,6 +90,7 @@ func init() {
 	rootCmd.AddCommand(appCmd)
 	rootCmd.AddCommand(composeCmd)
 	rootCmd.AddCommand(envCmd)
+	rootCmd.AddCommand(domainCmd)
 }
 
 const (
@@ -97,6 +98,7 @@ const (
 	cmdApp     = "app"
 	cmdCompose = "compose"
 	cmdEnv     = "env"
+	cmdDomain  = "domain"
 )
 
 // needsStore returns true if the command requires the state store.
@@ -105,7 +107,7 @@ func needsStore(cmd *cobra.Command) bool {
 	if cmd.Parent() != nil {
 		parent = cmd.Parent().Name()
 	}
-	return parent == cmdProject || parent == cmdApp || parent == cmdCompose || parent == cmdEnv
+	return parent == cmdProject || parent == cmdApp || parent == cmdCompose || parent == cmdEnv || parent == cmdDomain
 }
 
 // needsRuntime returns true if the command requires the libvirt runtime.

@@ -132,9 +132,9 @@ goshipctl env list myapp
 goshipd &
 export GOSHIP_API_URL=http://localhost:8080
 
-# Assign domains for reverse proxy routing (API mode)
-curl -X PUT http://localhost:8080/api/v1/projects/myapp/domains \
-  -d '{"domains":["myapp.local"]}'
+# Assign domains for reverse proxy routing
+goshipctl domain set myapp myapp.local
+goshipctl domain list myapp
 
 # Deploy a container app (inherits project env vars)
 # After deploy, accessible at web.myapp.local:8081 via reverse proxy

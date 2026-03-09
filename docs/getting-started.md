@@ -88,6 +88,17 @@ Check it:
 ./bin/goshipctl project info myapp
 ```
 
+## Assign Domains (Reverse Proxy)
+
+Assign domains to your project so the reverse proxy can route HTTP traffic to your apps:
+
+```bash
+./bin/goshipctl domain set myapp myapp.local
+./bin/goshipctl domain list myapp
+```
+
+After deploying apps, they'll be accessible at `{appname}.{domain}:{proxy_port}` (e.g., `web.myapp.local:8081`).
+
 ## Deploy a Container App
 
 Create an app definition and deploy it:

@@ -582,6 +582,61 @@ goshipctl vm ping myvm
 
 ---
 
+## `goshipctl domain`
+
+Manage project domains for reverse proxy routing.
+
+### `goshipctl domain set <project> <domain> [domain...]`
+
+Sets the domains assigned to a project (replaces all existing domains). The first domain becomes the default unless overridden with `--default`.
+
+```bash
+goshipctl domain set <project> <domain> [domain...] [flags]
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--default` | *(first domain)* | Override which domain is the default |
+
+**Examples:**
+
+```bash
+goshipctl domain set myapp myapp.local
+goshipctl domain set myapp myapp.local myapp.dev --default myapp.dev
+```
+
+### `goshipctl domain list <project>`
+
+Lists all domains assigned to a project with the default domain marked.
+
+```bash
+goshipctl domain list myapp
+```
+
+Alias: `goshipctl domain ls myapp`
+
+**Example output:**
+
+```
+DOMAIN          DEFAULT
+myapp.local     *
+myapp.dev
+```
+
+### `goshipctl domain remove <project> <domain> [domain...]`
+
+Removes specific domains from a project. If the default domain is removed, the first remaining domain becomes the new default.
+
+```bash
+goshipctl domain remove myapp myapp.dev
+```
+
+Alias: `goshipctl domain rm myapp myapp.dev`
+
+---
+
 ## API Endpoints (goshipd)
 
 When running `goshipd`, the following additional endpoints are available for reverse proxy management:
