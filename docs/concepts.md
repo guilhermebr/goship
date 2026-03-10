@@ -121,6 +121,32 @@ The proxy listens on a separate port (default `:8081`, configurable via `GOSHIP_
 curl http://web.myapp.local:8081/
 ```
 
+## Nodes
+
+A **node** is a compute host in the GoShip cluster. In Phase 0, there is a single implicit node (the local machine). The node entity lays the groundwork for multi-node scheduling in future phases.
+
+Each node has:
+- **Hostname** — unique human-readable identifier
+- **Endpoint** — agent address (`ip:port`) for future node-to-node communication
+- **Labels** — key-value pairs for scheduling and organization (e.g., `region=us-east`)
+- **Resources** — CPU and memory available on the node
+
+Node statuses:
+
+| Status | Meaning |
+|--------|---------|
+| `online` | Node is healthy and accepting workloads |
+| `offline` | Node is unreachable or shut down |
+| `draining` | Node is being evacuated — no new workloads scheduled |
+
+```bash
+goship node register worker-1 --endpoint 10.0.0.5:9090 --label region=us-east
+goship node list
+goship node info worker-1
+goship node drain worker-1
+goship node remove worker-1
+```
+
 ## Architecture
 
 GoShip uses a three-tier execution model:

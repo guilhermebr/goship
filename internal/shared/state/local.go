@@ -89,6 +89,9 @@ func (s *Store) load() error {
 	if state.Apps == nil {
 		state.Apps = make(map[string]map[string]*entities.AppSpec)
 	}
+	if state.Nodes == nil {
+		state.Nodes = make(map[string]*entities.Node)
+	}
 
 	s.state = &state
 	return nil
@@ -316,6 +319,71 @@ func (s *Store) DeleteApp(projectID, appName string) error {
 	s.state.RemoveApp(projectID, appName)
 
 	return s.save()
+}
+
+// SetNode creates or updates a node in the state store.
+func (s *Store) SetNode(node *entities.Node) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.state.Nodes[node.ID] = node
+
+	return s.save()
+}
+
+// GetNode returns a node by ID or hostname.
+func (s *Store) GetNode(idOrHostname string) (*entities.Node, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Try by ID first
+	if node, ok := s.state.Nodes[idOrHostname]; ok {
+		return node, nil
+	}
+
+	// Try by hostname
+	for _, node := range s.state.Nodes {
+		if node.Hostname == idOrHostname {
+			return node, nil
+		}
+	}
+
+	return nil, fmt.Errorf("node not found: %s", idOrHostname)
+}
+
+// ListNodes returns all nodes.
+func (s *Store) ListNodes() []*entities.Node {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nodes := make([]*entities.Node, 0, len(s.state.Nodes))
+	for _, n := range s.state.Nodes {
+		nodes = append(nodes, n)
+	}
+
+	return nodes
+}
+
+// DeleteNode deletes a node by ID or hostname.
+func (s *Store) DeleteNode(idOrHostname string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Try by ID first
+	if _, ok := s.state.Nodes[idOrHostname]; ok {
+		delete(s.state.Nodes, idOrHostname)
+		return s.save()
+	}
+
+	// Try by hostname
+	for id, node := range s.state.Nodes {
+		if node.Hostname == idOrHostname {
+			delete(s.state.Nodes, id)
+			return s.save()
+		}
+	}
+
+	return fmt.Errorf("node not found: %s", idOrHostname)
 }
 
 // Path returns the path to the state file.

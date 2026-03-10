@@ -475,6 +475,147 @@ func TestSetApp_UpdateExisting(t *testing.T) {
 	}
 }
 
+// --- Node tests ---
+
+func TestSetAndGetNode(t *testing.T) {
+	store := setupTestStore(t)
+
+	node := &entities.Node{
+		ID:       "node-1",
+		Hostname: "worker-1",
+		Endpoint: "10.0.0.1:9090",
+		Status:   entities.NodeStatusOnline,
+		Labels:   map[string]string{"region": "us-east"},
+	}
+
+	err := store.SetNode(node)
+	if err != nil {
+		t.Fatalf("SetNode: %v", err)
+	}
+
+	got, err := store.GetNode("node-1")
+	if err != nil {
+		t.Fatalf("GetNode by ID: %v", err)
+	}
+	if got.Hostname != "worker-1" {
+		t.Errorf("Hostname = %q, want %q", got.Hostname, "worker-1")
+	}
+	if got.Endpoint != "10.0.0.1:9090" {
+		t.Errorf("Endpoint = %q, want %q", got.Endpoint, "10.0.0.1:9090")
+	}
+	if got.Labels["region"] != "us-east" {
+		t.Errorf("Labels[region] = %q, want %q", got.Labels["region"], "us-east")
+	}
+}
+
+func TestGetNode_ByHostname(t *testing.T) {
+	store := setupTestStore(t)
+
+	node := &entities.Node{
+		ID:       "node-1",
+		Hostname: "worker-1",
+		Endpoint: "10.0.0.1:9090",
+		Status:   entities.NodeStatusOnline,
+	}
+	_ = store.SetNode(node)
+
+	got, err := store.GetNode("worker-1")
+	if err != nil {
+		t.Fatalf("GetNode by hostname: %v", err)
+	}
+	if got.ID != "node-1" {
+		t.Errorf("ID = %q, want %q", got.ID, "node-1")
+	}
+}
+
+func TestGetNode_NotFound(t *testing.T) {
+	store := setupTestStore(t)
+
+	_, err := store.GetNode("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent node")
+	}
+}
+
+func TestListNodes(t *testing.T) {
+	store := setupTestStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "n1", Hostname: "host-1", Status: entities.NodeStatusOnline})
+	_ = store.SetNode(&entities.Node{ID: "n2", Hostname: "host-2", Status: entities.NodeStatusOnline})
+
+	nodes := store.ListNodes()
+	if len(nodes) != 2 {
+		t.Fatalf("ListNodes: got %d, want 2", len(nodes))
+	}
+}
+
+func TestListNodes_Empty(t *testing.T) {
+	store := setupTestStore(t)
+
+	nodes := store.ListNodes()
+	if len(nodes) != 0 {
+		t.Fatalf("ListNodes: got %d, want 0", len(nodes))
+	}
+}
+
+func TestDeleteNode_ByID(t *testing.T) {
+	store := setupTestStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "del-me", Hostname: "host-1", Status: entities.NodeStatusOnline})
+
+	err := store.DeleteNode("del-me")
+	if err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+
+	_, err = store.GetNode("del-me")
+	if err == nil {
+		t.Fatal("expected error after delete")
+	}
+}
+
+func TestDeleteNode_ByHostname(t *testing.T) {
+	store := setupTestStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "node-1", Hostname: "del-by-host", Status: entities.NodeStatusOnline})
+
+	err := store.DeleteNode("del-by-host")
+	if err != nil {
+		t.Fatalf("DeleteNode by hostname: %v", err)
+	}
+
+	nodes := store.ListNodes()
+	if len(nodes) != 0 {
+		t.Fatalf("ListNodes: got %d, want 0", len(nodes))
+	}
+}
+
+func TestDeleteNode_NotFound(t *testing.T) {
+	store := setupTestStore(t)
+
+	err := store.DeleteNode("ghost")
+	if err == nil {
+		t.Fatal("expected error for nonexistent node")
+	}
+}
+
+func TestSetNode_UpdateExisting(t *testing.T) {
+	store := setupTestStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "node-1", Hostname: "host-1", Status: entities.NodeStatusOnline})
+	_ = store.SetNode(&entities.Node{ID: "node-1", Hostname: "host-1", Status: entities.NodeStatusDraining})
+
+	got, _ := store.GetNode("node-1")
+	if got.Status != entities.NodeStatusDraining {
+		t.Errorf("Status = %q, want %q", got.Status, entities.NodeStatusDraining)
+	}
+
+	nodes := store.ListNodes()
+	if len(nodes) != 1 {
+		t.Errorf("ListNodes: got %d, want 1 (should overwrite, not duplicate)", len(nodes))
+	}
+}
+
 func TestPersistence_AcrossReloads(t *testing.T) {
 	dir := t.TempDir()
 
@@ -487,6 +628,7 @@ func TestPersistence_AcrossReloads(t *testing.T) {
 		State:     entities.InstanceStateRunning,
 	})
 	_ = store1.SetApp(project.ID, &entities.AppSpec{Name: "web", Image: "nginx"})
+	_ = store1.SetNode(&entities.Node{ID: "node-p", Hostname: "persistent-host", Status: entities.NodeStatusOnline})
 
 	// Phase 2: Reload and verify
 	store2, _ := NewStore(dir)
@@ -507,5 +649,13 @@ func TestPersistence_AcrossReloads(t *testing.T) {
 	}
 	if app.Image != "nginx" {
 		t.Errorf("app Image = %q, want %q", app.Image, "nginx")
+	}
+
+	node, err := store2.GetNode("node-p")
+	if err != nil {
+		t.Fatalf("node not persisted: %v", err)
+	}
+	if node.Hostname != "persistent-host" {
+		t.Errorf("node Hostname = %q, want %q", node.Hostname, "persistent-host")
 	}
 }

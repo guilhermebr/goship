@@ -903,3 +903,201 @@ func TestProjectLogs_NoRuntime(t *testing.T) {
 		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// --- Node endpoint tests ---
+
+func TestNodeRegister(t *testing.T) {
+	srv := newTestServer(t)
+
+	body := apiserver.RegisterNodeRequest{
+		Hostname: "worker-1",
+		Endpoint: "10.0.0.1:9090",
+		Labels:   map[string]string{"region": "us-east"},
+	}
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes", body)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var node entities.Node
+	if err := json.NewDecoder(w.Body).Decode(&node); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if node.Hostname != "worker-1" {
+		t.Fatalf("expected hostname 'worker-1', got %s", node.Hostname)
+	}
+	if node.Endpoint != "10.0.0.1:9090" {
+		t.Fatalf("expected endpoint '10.0.0.1:9090', got %s", node.Endpoint)
+	}
+	if node.Status != entities.NodeStatusOnline {
+		t.Fatalf("expected status 'online', got %s", node.Status)
+	}
+	if node.ID == "" {
+		t.Fatal("expected non-empty ID")
+	}
+	if node.Labels["region"] != "us-east" {
+		t.Fatalf("expected label region=us-east, got %s", node.Labels["region"])
+	}
+}
+
+func TestNodeRegister_MissingHostname(t *testing.T) {
+	srv := newTestServer(t)
+
+	body := apiserver.RegisterNodeRequest{Endpoint: "10.0.0.1:9090"}
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes", body)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNodeRegister_Duplicate(t *testing.T) {
+	srv := newTestServer(t)
+
+	body := apiserver.RegisterNodeRequest{Hostname: "worker-1", Endpoint: "10.0.0.1:9090"}
+
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+
+	w = doRequest(srv, http.MethodPost, "/api/v1/nodes", body)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNodeList_Empty(t *testing.T) {
+	srv := newTestServer(t)
+	w := doRequest(srv, http.MethodGet, "/api/v1/nodes", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var nodes []*entities.Node
+	if err := json.NewDecoder(w.Body).Decode(&nodes); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("expected empty list, got %d nodes", len(nodes))
+	}
+}
+
+func TestNodeList_WithNodes(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "n1", Hostname: "host-1", Status: entities.NodeStatusOnline})
+	_ = store.SetNode(&entities.Node{ID: "n2", Hostname: "host-2", Status: entities.NodeStatusOnline})
+
+	w := doRequest(srv, http.MethodGet, "/api/v1/nodes", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var nodes []*entities.Node
+	if err := json.NewDecoder(w.Body).Decode(&nodes); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+}
+
+func TestNodeGet_Found(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	_ = store.SetNode(&entities.Node{
+		ID:       "node-123",
+		Hostname: "worker-1",
+		Endpoint: "10.0.0.1:9090",
+		Status:   entities.NodeStatusOnline,
+	})
+
+	w := doRequest(srv, http.MethodGet, "/api/v1/nodes/node-123", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var node entities.Node
+	if err := json.NewDecoder(w.Body).Decode(&node); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if node.Hostname != "worker-1" {
+		t.Fatalf("expected hostname 'worker-1', got %s", node.Hostname)
+	}
+}
+
+func TestNodeGet_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+	w := doRequest(srv, http.MethodGet, "/api/v1/nodes/nonexistent", nil)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestNodeDelete(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "del-node", Hostname: "doomed", Status: entities.NodeStatusOnline})
+
+	w := doRequest(srv, http.MethodDelete, "/api/v1/nodes/del-node", nil)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify it's gone.
+	nodes := store.ListNodes()
+	if len(nodes) != 0 {
+		t.Fatalf("expected 0 nodes after delete, got %d", len(nodes))
+	}
+}
+
+func TestNodeDelete_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+	w := doRequest(srv, http.MethodDelete, "/api/v1/nodes/ghost", nil)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestNodeDrain(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "drain-me", Hostname: "worker-1", Status: entities.NodeStatusOnline})
+
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes/drain-me/drain", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var node entities.Node
+	if err := json.NewDecoder(w.Body).Decode(&node); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if node.Status != entities.NodeStatusDraining {
+		t.Fatalf("expected status 'draining', got %s", node.Status)
+	}
+
+	// Verify in store.
+	stored, _ := store.GetNode("drain-me")
+	if stored.Status != entities.NodeStatusDraining {
+		t.Fatalf("expected stored status 'draining', got %s", stored.Status)
+	}
+}
+
+func TestNodeDrain_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes/ghost/drain", nil)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}

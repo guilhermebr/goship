@@ -13,6 +13,8 @@ type LocalState struct {
 	Instances map[string]*ProjectInstance `json:"instances"`
 	// Apps per project (project_id -> app_name -> AppSpec)
 	Apps map[string]map[string]*AppSpec `json:"apps"`
+	// Nodes in the cluster (node_id -> Node)
+	Nodes map[string]*Node `json:"nodes,omitempty"`
 	// Last update timestamp
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -24,6 +26,7 @@ func NewLocalState() *LocalState {
 		Projects:  make(map[string]*Project),
 		Instances: make(map[string]*ProjectInstance),
 		Apps:      make(map[string]map[string]*AppSpec),
+		Nodes:     make(map[string]*Node),
 		UpdatedAt: time.Now(),
 	}
 }

@@ -637,6 +637,108 @@ Alias: `goship domain rm myapp myapp.dev`
 
 ---
 
+## `goship node`
+
+Manage cluster nodes. Nodes represent compute hosts in the GoShip cluster.
+
+### `goship node register <hostname>`
+
+Registers a new node in the cluster.
+
+```bash
+goship node register <hostname> [flags]
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--endpoint` | *(empty)* | Node agent endpoint (`ip:port`) |
+| `--label` | | Labels as `key=value` (repeatable) |
+
+**Examples:**
+
+```bash
+goship node register worker-1 --endpoint 10.0.0.5:9090
+goship node register worker-2 --endpoint 10.0.0.6:9090 --label region=us-east --label tier=compute
+```
+
+**Example output:**
+
+```
+Node 'worker-1' registered successfully
+  ID:       a1b2c3d4
+  Endpoint: 10.0.0.5:9090
+  Status:   online
+```
+
+### `goship node list`
+
+Lists all registered nodes.
+
+```bash
+goship node list
+```
+
+Alias: `goship node ls`
+
+**Example output:**
+
+```
+HOSTNAME   ID        STATUS    ENDPOINT          LAST HEARTBEAT
+worker-1   a1b2c3d4  online    10.0.0.5:9090     2026-03-10 14:30
+worker-2   e5f6g7h8  draining  10.0.0.6:9090     2026-03-10 14:28
+```
+
+### `goship node info <hostname>`
+
+Shows detailed information about a node.
+
+```bash
+goship node info worker-1
+```
+
+**Example output:**
+
+```
+Hostname:       worker-1
+ID:             a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Status:         online
+Endpoint:       10.0.0.5:9090
+Labels:
+  region=us-east
+  tier=compute
+Last Heartbeat: 2026-03-10T14:30:00Z
+Created:        2026-03-10T10:00:00Z
+Updated:        2026-03-10T14:30:00Z
+```
+
+### `goship node remove <hostname>`
+
+Removes a node from the cluster.
+
+```bash
+goship node remove worker-1
+```
+
+Alias: `goship node rm worker-1`
+
+### `goship node drain <hostname>`
+
+Marks a node as draining. A draining node will not receive new workloads.
+
+```bash
+goship node drain worker-1
+```
+
+**Example output:**
+
+```
+Node 'worker-1' is now draining
+```
+
+---
+
 ## API Endpoints (goship server)
 
 When running `goship server`, the following additional endpoints are available for reverse proxy management:
@@ -665,6 +767,39 @@ curl http://localhost:8080/api/v1/proxy/routes
   {"domain": "web.myapp.local", "backend": "192.168.122.10:8080"},
   {"domain": "api.myapp.local", "backend": "192.168.122.10:3000"}
 ]
+```
+
+### Nodes
+
+**`POST /api/v1/nodes`** — Register a new node.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/nodes \
+  -d '{"hostname":"worker-1","endpoint":"10.0.0.5:9090","labels":{"region":"us-east"}}'
+```
+
+**`GET /api/v1/nodes`** — List all nodes.
+
+```bash
+curl http://localhost:8080/api/v1/nodes
+```
+
+**`GET /api/v1/nodes/{id}`** — Get a node by ID or hostname.
+
+```bash
+curl http://localhost:8080/api/v1/nodes/worker-1
+```
+
+**`DELETE /api/v1/nodes/{id}`** — Remove a node.
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/nodes/worker-1
+```
+
+**`POST /api/v1/nodes/{id}/drain`** — Drain a node (mark as draining).
+
+```bash
+curl -X POST http://localhost:8080/api/v1/nodes/worker-1/drain
 ```
 
 ### App Update (Proxy Fields)

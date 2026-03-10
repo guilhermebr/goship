@@ -89,6 +89,7 @@ GoShip is built around a simple model:
 - **REST API server** — `goship server` serves a JSON API for project and app management
 - **Smart API mode** — CLI auto-detects a running server; use `--direct` to force direct libvirt mode
 - **Reverse proxy** — Domain-based HTTP routing to apps inside VMs, with automatic route lifecycle management
+- **Node management** — Register, list, inspect, drain, and remove cluster nodes
 
 ---
 

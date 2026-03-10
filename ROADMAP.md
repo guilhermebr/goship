@@ -19,6 +19,7 @@ GoShip is built incrementally. This roadmap lists what has shipped and what is p
 - [x] REST API server (`goshipd`) with project and app endpoints
 - [x] CLI HTTP client — `GOSHIP_API_URL` enables API mode with backward-compatible fallback
 - [x] Reverse proxy — domain-based HTTP routing to VM apps, automatic route lifecycle
+- [x] Node entity and registration — register, list, drain, remove nodes
 
 ---
 
@@ -28,7 +29,7 @@ GoShip is built incrementally. This roadmap lists what has shipped and what is p
 
 ## Multi-Node
 
-- [ ] Node agent, SQLite store, workload scheduler
+- [ ] Node agent communication, SQLite store, workload scheduler
 
 ## Observability
 
