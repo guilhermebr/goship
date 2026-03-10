@@ -1,6 +1,6 @@
 # CLI Reference
 
-Complete reference for `goshipctl`, the GoShip command-line tool.
+Complete reference for `goship`, the GoShip command-line tool.
 
 ## Global Flags
 
@@ -15,9 +15,9 @@ These flags apply to all commands:
 | `--install-docker` | `true` | Install Docker during guest provisioning |
 | `--api-url` | *(empty)* | GoShip API server URL (env: `GOSHIP_API_URL`). When set, CLI uses HTTP instead of direct libvirt |
 
-### `goshipd` Configuration
+### `goship server` Configuration
 
-`goshipd` is configured via environment variables (using `ardanlabs/conf`):
+`goship server` is configured via environment variables (using `ardanlabs/conf`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -29,16 +29,16 @@ These flags apply to all commands:
 
 ### API Mode
 
-When `--api-url` (or `GOSHIP_API_URL`) is set, `goshipctl` talks to a running `goshipd` server over HTTP instead of calling libvirt directly. This enables remote management without requiring libvirt on the client machine.
+When `--api-url` (or `GOSHIP_API_URL`) is set, `goship` talks to a running `goship server` server over HTTP instead of calling libvirt directly. This enables remote management without requiring libvirt on the client machine.
 
 ```bash
 # Start the API server
-goshipd &
+goship server &
 
 # Use CLI in API mode
 export GOSHIP_API_URL=http://localhost:8080
-goshipctl project list
-goshipctl project create myapp --cpu 1 --memory 512
+goship project list
+goship project create myapp --cpu 1 --memory 512
 ```
 
 Some commands are not available in API mode and return an error:
@@ -48,18 +48,18 @@ Some commands are not available in API mode and return an error:
 
 ---
 
-## `goshipctl version`
+## `goship version`
 
 Prints version, commit hash, build time, and libvirt/QEMU version info.
 
 ```bash
-goshipctl version
+goship version
 ```
 
 **Example output:**
 
 ```
-goshipctl dev
+goship dev
   commit: 827853a
   built:  2025-01-15T10:30:00Z
 
@@ -69,12 +69,12 @@ QEMU version:    8.2.2
 
 ---
 
-## `goshipctl capabilities`
+## `goship capabilities`
 
 Discovers and displays host virtualization capabilities: hypervisor type, KVM status, CPU topology, memory, hugepages, and confidential computing support.
 
 ```bash
-goshipctl capabilities
+goship capabilities
 ```
 
 **Example output:**
@@ -101,12 +101,12 @@ QEMU:          8.2.2
 
 ---
 
-## `goshipctl generate-xml`
+## `goship generate-xml`
 
 Generates a libvirt domain XML document from flags. Does not require a libvirt connection. Useful for experimenting with VM configurations.
 
 ```bash
-goshipctl generate-xml [flags]
+goship generate-xml [flags]
 ```
 
 **Flags:**
@@ -126,21 +126,21 @@ goshipctl generate-xml [flags]
 **Example:**
 
 ```bash
-goshipctl generate-xml --name test-vm --memory 1024 --cpus 2
+goship generate-xml --name test-vm --memory 1024 --cpus 2
 ```
 
 ---
 
-## `goshipctl image`
+## `goship image`
 
 Manage VM base images.
 
-### `goshipctl image pull`
+### `goship image pull`
 
 Downloads the Alpine Linux NoCloud QCOW2 image used as the GoShip base image.
 
 ```bash
-goshipctl image pull [flags]
+goship image pull [flags]
 ```
 
 **Flags:**
@@ -153,16 +153,16 @@ goshipctl image pull [flags]
 **Example:**
 
 ```bash
-goshipctl image pull
-goshipctl image pull --force  # re-download
+goship image pull
+goship image pull --force  # re-download
 ```
 
-### `goshipctl image build`
+### `goship image build`
 
 Builds a plain base image locally by downloading the Alpine source and resizing it. Does not install goship-init (that happens per-VM during `project create`).
 
 ```bash
-goshipctl image build [flags]
+goship image build [flags]
 ```
 
 **Flags:**
@@ -176,21 +176,21 @@ goshipctl image build [flags]
 **Example:**
 
 ```bash
-goshipctl image build --image-size 4G
+goship image build --image-size 4G
 ```
 
 ---
 
-## `goshipctl project`
+## `goship project`
 
 Manage projects. Each project runs in its own isolated VM.
 
-### `goshipctl project create <name>`
+### `goship project create <name>`
 
 Creates a new project with its own VM. Provisions the VM with cloud-init, injects goship-init, and optionally installs Docker.
 
 ```bash
-goshipctl project create <name> [flags]
+goship project create <name> [flags]
 ```
 
 **Flags:**
@@ -206,26 +206,26 @@ goshipctl project create <name> [flags]
 **Example:**
 
 ```bash
-goshipctl project create webapp --cpu 2 --memory 1024 --disk 8192
-goshipctl project create minimal  # uses defaults: 1 CPU, 512MB RAM, 4GB disk
+goship project create webapp --cpu 2 --memory 1024 --disk 8192
+goship project create minimal  # uses defaults: 1 CPU, 512MB RAM, 4GB disk
 ```
 
-### `goshipctl project list`
+### `goship project list`
 
 Lists all projects with state, runtime, resources, and creation time.
 
 ```bash
-goshipctl project list
+goship project list
 ```
 
-Alias: `goshipctl project ls`
+Alias: `goship project ls`
 
-### `goshipctl project info <name>`
+### `goship project info <name>`
 
 Shows detailed project information including VM instance details and apps.
 
 ```bash
-goshipctl project info myapp
+goship project info myapp
 ```
 
 **Example output:**
@@ -251,30 +251,30 @@ Apps:
   - api (binary: /opt/goship/binaries/api/myapi)
 ```
 
-### `goshipctl project delete <name>`
+### `goship project delete <name>`
 
 Destroys the project's VM and removes the project from the state store.
 
 ```bash
-goshipctl project delete myapp
+goship project delete myapp
 ```
 
-Alias: `goshipctl project rm myapp`
+Alias: `goship project rm myapp`
 
-### `goshipctl project console <name>`
+### `goship project console <name>`
 
 Opens an interactive serial console to the project VM via `virsh console`. Use `Ctrl+]` to exit.
 
 ```bash
-goshipctl project console myapp
+goship project console myapp
 ```
 
-### `goshipctl project logs <name> [source]`
+### `goship project logs <name> [source]`
 
 Shows logs from the project VM.
 
 ```bash
-goshipctl project logs <name> [source] [flags]
+goship project logs <name> [source] [flags]
 ```
 
 **Log sources** (positional argument):
@@ -295,42 +295,42 @@ goshipctl project logs <name> [source] [flags]
 **Examples:**
 
 ```bash
-goshipctl project logs myapp                     # GoShip Init logs (default)
-goshipctl project logs myapp cloud-init           # Cloud-init provisioning logs
-goshipctl project logs myapp -f                   # Follow GoShip Init logs
-goshipctl project logs myapp --file /var/log/messages  # Arbitrary log file
+goship project logs myapp                     # GoShip Init logs (default)
+goship project logs myapp cloud-init           # Cloud-init provisioning logs
+goship project logs myapp -f                   # Follow GoShip Init logs
+goship project logs myapp --file /var/log/messages  # Arbitrary log file
 ```
 
-### `goshipctl project stop <name>`
+### `goship project stop <name>`
 
 Gracefully stops the project VM by sending an ACPI shutdown signal.
 
 ```bash
-goshipctl project stop myapp
+goship project stop myapp
 ```
 
-### `goshipctl project start <name>`
+### `goship project start <name>`
 
 Starts a previously stopped project VM.
 
 ```bash
-goshipctl project start myapp
+goship project start myapp
 ```
 
-### `goshipctl project restart <name>`
+### `goship project restart <name>`
 
 Restarts a project VM (stop, wait for shutdown, then start).
 
 ```bash
-goshipctl project restart myapp
+goship project restart myapp
 ```
 
-### `goshipctl project update-init <name>`
+### `goship project update-init <name>`
 
 Pushes a new goship-init binary into a running VM over virtio-serial using a chunked transfer protocol (512KB chunks with SHA256 verification).
 
 ```bash
-goshipctl project update-init <name> [flags]
+goship project update-init <name> [flags]
 ```
 
 **Flags:**
@@ -344,21 +344,21 @@ goshipctl project update-init <name> [flags]
 
 ```bash
 make build-goship-init
-goshipctl project update-init myapp --restart
+goship project update-init myapp --restart
 ```
 
 ---
 
-## `goshipctl app`
+## `goship app`
 
 Manage applications inside project VMs.
 
-### `goshipctl app create <project> <appname>`
+### `goship app create <project> <appname>`
 
 Creates an application definition in the project. Does not start anything — use `app deploy` to push it to the VM.
 
 ```bash
-goshipctl app create <project> <appname> [flags]
+goship app create <project> <appname> [flags]
 ```
 
 **Flags:**
@@ -383,13 +383,13 @@ goshipctl app create <project> <appname> [flags]
 
 ```bash
 # Container app
-goshipctl app create myapp web \
+goship app create myapp web \
   --image nginx:alpine \
   --port 8080:80 \
   --env "ENV=production"
 
 # Process app with auto-restart
-goshipctl app create myapp api \
+goship app create myapp api \
   --mode process \
   --binary ./bin/myapi \
   --port 3000:3000 \
@@ -397,23 +397,23 @@ goshipctl app create myapp api \
   --env "DATABASE_URL=postgres://..."
 ```
 
-### `goshipctl app deploy <project> <appname>`
+### `goship app deploy <project> <appname>`
 
 Deploys an application to the project VM. For container mode, GoShip Init pulls the image and starts the container. For process mode with a local binary, the binary is automatically uploaded to the VM (with SHA256 verification) before starting.
 
 ```bash
-goshipctl app deploy myapp web
+goship app deploy myapp web
 ```
 
-### `goshipctl app list <project>`
+### `goship app list <project>`
 
 Lists all applications in a project with live status from the VM.
 
 ```bash
-goshipctl app list myapp
+goship app list myapp
 ```
 
-Alias: `goshipctl app ls myapp`
+Alias: `goship app ls myapp`
 
 **Example output:**
 
@@ -423,38 +423,38 @@ web   container  nginx:alpine                        running  8080:80
 api   process    /opt/goship/binaries/api/myapi      running  3000:3000
 ```
 
-### `goshipctl app info <project> <appname>`
+### `goship app info <project> <appname>`
 
 Shows detailed application information including configuration and live status.
 
 ```bash
-goshipctl app info myapp web
+goship app info myapp web
 ```
 
-### `goshipctl app stop <project> <appname>`
+### `goship app stop <project> <appname>`
 
 Stops a running application inside the project VM.
 
 ```bash
-goshipctl app stop myapp web
+goship app stop myapp web
 ```
 
-### `goshipctl app delete <project> <appname>`
+### `goship app delete <project> <appname>`
 
 Removes the application from the VM (best-effort) and deletes it from the state store.
 
 ```bash
-goshipctl app delete myapp web
+goship app delete myapp web
 ```
 
-Alias: `goshipctl app rm myapp web`
+Alias: `goship app rm myapp web`
 
-### `goshipctl app logs <project> <appname>`
+### `goship app logs <project> <appname>`
 
 Shows application logs. For container apps, reads Docker logs. For process apps, reads from `/var/log/goship-<appname>.log` inside the VM.
 
 ```bash
-goshipctl app logs <project> <appname> [flags]
+goship app logs <project> <appname> [flags]
 ```
 
 **Flags:**
@@ -467,27 +467,27 @@ goshipctl app logs <project> <appname> [flags]
 **Examples:**
 
 ```bash
-goshipctl app logs myapp web
-goshipctl app logs myapp api -n 50
-goshipctl app logs myapp web -f
+goship app logs myapp web
+goship app logs myapp api -n 50
+goship app logs myapp web -f
 ```
 
 ---
 
-### `goshipctl app push-image <project> <image>`
+### `goship app push-image <project> <image>`
 
 Exports a local Docker image, compresses it with gzip, and transfers it into the project VM over virtio-serial. No registry needed.
 
 ```bash
-goshipctl app push-image myapp myimage:latest
+goship app push-image myapp myimage:latest
 ```
 
-### `goshipctl app edit <project> <appname>`
+### `goship app edit <project> <appname>`
 
 Modifies an application's configuration without deploying. Changes take effect on next `app deploy`.
 
 ```bash
-goshipctl app edit <project> <appname> [flags]
+goship app edit <project> <appname> [flags]
 ```
 
 **Flags:**
@@ -508,22 +508,22 @@ goshipctl app edit <project> <appname> [flags]
 **Example:**
 
 ```bash
-goshipctl app edit myapp web --port 9090:80 --env "LOG_LEVEL=debug"
-goshipctl app deploy myapp web  # apply changes
+goship app edit myapp web --port 9090:80 --env "LOG_LEVEL=debug"
+goship app deploy myapp web  # apply changes
 ```
 
 ---
 
-## `goshipctl vm`
+## `goship vm`
 
 Low-level VM lifecycle commands. These are experimental commands for learning and debugging — use `project` commands for normal workflows.
 
-### `goshipctl vm create <name>`
+### `goship vm create <name>`
 
 Creates a CoW disk overlay, provisions goship-init, generates domain XML, and starts a VM.
 
 ```bash
-goshipctl vm create <name> [flags]
+goship vm create <name> [flags]
 ```
 
 **Flags:**
@@ -543,12 +543,12 @@ goshipctl vm create <name> [flags]
 | `--skip-guest-provision` | `false` | Skip guest provisioning |
 | `--install-docker` | `true` | Install Docker during provisioning |
 
-### `goshipctl vm destroy <name>`
+### `goship vm destroy <name>`
 
 Stops and undefines a VM, optionally removing its disk.
 
 ```bash
-goshipctl vm destroy <name> [flags]
+goship vm destroy <name> [flags]
 ```
 
 **Flags:**
@@ -558,20 +558,20 @@ goshipctl vm destroy <name> [flags]
 | `--data-dir` | `~/.goship` | Data directory |
 | `--keep-disk` | `false` | Keep disk image after destroying |
 
-### `goshipctl vm list`
+### `goship vm list`
 
 Lists all GoShip-managed VMs (domains with the `goship-` prefix) and their state.
 
 ```bash
-goshipctl vm list
+goship vm list
 ```
 
-### `goshipctl vm ping <name>`
+### `goship vm ping <name>`
 
 Sends a ping command to the GoShip Init agent inside a VM via virtio-serial.
 
 ```bash
-goshipctl vm ping myvm
+goship vm ping myvm
 ```
 
 **Flags:**
@@ -582,16 +582,16 @@ goshipctl vm ping myvm
 
 ---
 
-## `goshipctl domain`
+## `goship domain`
 
 Manage project domains for reverse proxy routing.
 
-### `goshipctl domain set <project> <domain> [domain...]`
+### `goship domain set <project> <domain> [domain...]`
 
 Sets the domains assigned to a project (replaces all existing domains). The first domain becomes the default unless overridden with `--default`.
 
 ```bash
-goshipctl domain set <project> <domain> [domain...] [flags]
+goship domain set <project> <domain> [domain...] [flags]
 ```
 
 **Flags:**
@@ -603,19 +603,19 @@ goshipctl domain set <project> <domain> [domain...] [flags]
 **Examples:**
 
 ```bash
-goshipctl domain set myapp myapp.local
-goshipctl domain set myapp myapp.local myapp.dev --default myapp.dev
+goship domain set myapp myapp.local
+goship domain set myapp myapp.local myapp.dev --default myapp.dev
 ```
 
-### `goshipctl domain list <project>`
+### `goship domain list <project>`
 
 Lists all domains assigned to a project with the default domain marked.
 
 ```bash
-goshipctl domain list myapp
+goship domain list myapp
 ```
 
-Alias: `goshipctl domain ls myapp`
+Alias: `goship domain ls myapp`
 
 **Example output:**
 
@@ -625,21 +625,21 @@ myapp.local     *
 myapp.dev
 ```
 
-### `goshipctl domain remove <project> <domain> [domain...]`
+### `goship domain remove <project> <domain> [domain...]`
 
 Removes specific domains from a project. If the default domain is removed, the first remaining domain becomes the new default.
 
 ```bash
-goshipctl domain remove myapp myapp.dev
+goship domain remove myapp myapp.dev
 ```
 
-Alias: `goshipctl domain rm myapp myapp.dev`
+Alias: `goship domain rm myapp myapp.dev`
 
 ---
 
-## API Endpoints (goshipd)
+## API Endpoints (goship server)
 
-When running `goshipd`, the following additional endpoints are available for reverse proxy management:
+When running `goship server`, the following additional endpoints are available for reverse proxy management:
 
 ### Project Domains
 

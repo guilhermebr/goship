@@ -7,13 +7,13 @@ This document explains the core ideas behind GoShip and how its components fit t
 GoShip is a VM-centric application platform. Instead of deploying apps directly to a host, GoShip gives each project its own virtual machine and runs applications inside that VM through an in-guest agent.
 
 ```
-You (CLI) --> goshipctl --> libvirt/QEMU --> VM --> GoShip Init --> Your App
+You (CLI) --> goship --> libvirt/QEMU --> VM --> GoShip Init --> Your App
 ```
 
-GoShip also supports an API mode where the CLI talks to a REST API server (`goshipd`) instead of calling libvirt directly:
+GoShip also supports an API mode where the CLI talks to a REST API server (`goship server`) instead of calling libvirt directly:
 
 ```
-You (CLI) --> goshipctl --> goshipd (HTTP) --> libvirt/QEMU --> VM --> GoShip Init --> Your App
+You (CLI) --> goship --> goship server (HTTP) --> libvirt/QEMU --> VM --> GoShip Init --> Your App
 ```
 
 ## Projects
@@ -37,10 +37,10 @@ Project states:
 | `stopped` | VM has been shut down |
 
 ```bash
-goshipctl project create myapp --cpu 2 --memory 1024 --disk 4096
-goshipctl project list
-goshipctl project info myapp
-goshipctl project delete myapp
+goship project create myapp --cpu 2 --memory 1024 --disk 4096
+goship project list
+goship project info myapp
+goship project delete myapp
 ```
 
 ## Applications
@@ -52,8 +52,8 @@ Applications run inside project VMs. GoShip supports two execution modes:
 Deploys Docker images inside the VM. The in-guest agent pulls the image and manages the container lifecycle via the Docker SDK.
 
 ```bash
-goshipctl app create myproject web --mode container --image nginx:alpine --port 8080:80
-goshipctl app deploy myproject web
+goship app create myproject web --mode container --image nginx:alpine --port 8080:80
+goship app deploy myproject web
 ```
 
 ### Process Mode
@@ -61,8 +61,8 @@ goshipctl app deploy myproject web
 Runs a binary directly inside the VM. When you deploy, GoShip uploads the binary from your host to the VM over virtio-serial, then starts it as a supervised process with auto-restart support.
 
 ```bash
-goshipctl app create myproject api --mode process --binary ./bin/myapi --port 3000:3000
-goshipctl app deploy myproject api
+goship app create myproject api --mode process --binary ./bin/myapi --port 3000:3000
+goship app deploy myproject api
 ```
 
 ### App Lifecycle
@@ -110,7 +110,7 @@ Apps are externally routable by default. To prevent an app from being registered
 - **Registered** when an app is deployed (`app deploy`)
 - **Removed** when an app is stopped or deleted (`app stop`, `app delete`)
 - **Reconciled** when project domains or app hostname/available change
-- **Rebuilt** from state on `goshipd` startup
+- **Rebuilt** from state on `goship server` startup
 
 ### Proxy Server
 
@@ -127,7 +127,7 @@ GoShip uses a three-tier execution model:
 
 ```
 ┌──────────────────────────────────┐
-│  goshipctl (CLI on your host)    │  You run commands here
+│  goship (CLI on your host)    │  You run commands here
 └──────────────┬───────────────────┘
                │  Calls libvirt API
                ▼
@@ -144,14 +144,14 @@ GoShip uses a three-tier execution model:
 └──────────────────────────────────┘
 ```
 
-- **goshipctl** — The CLI tool you interact with. By default it talks directly to libvirt. When `GOSHIP_API_URL` is set, it talks to `goshipd` over HTTP instead.
-- **goshipd** — The REST API server. It wraps the same libvirt runtime and state store behind a JSON API, enabling remote management.
+- **goship** — The CLI tool you interact with. By default it talks directly to libvirt. When `GOSHIP_API_URL` is set, it talks to `goship server` over HTTP instead.
+- **goship server** — The REST API server. It wraps the same libvirt runtime and state store behind a JSON API, enabling remote management.
 - **Libvirt Runtime** — The backend that translates project/app operations into VM lifecycle calls (domain XML, CoW disks, cloud-init, virtio-serial communication).
 - **GoShip Init** — A static Go binary injected into each VM during provisioning. It runs as PID 1, listens on a virtio-serial device, and executes commands from the host (deploy, stop, status, logs).
 
 ## VM Lifecycle
 
-When you run `goshipctl project create`, several things happen in sequence:
+When you run `goship project create`, several things happen in sequence:
 
 1. **CoW disk creation** — A copy-on-write QCOW2 overlay is created from the base image. The base image stays clean; each VM writes changes to its own overlay.
 2. **Guest provisioning** — `virt-customize` runs against the overlay to inject `goship-init`, set up its OpenRC service, and optionally install Docker.

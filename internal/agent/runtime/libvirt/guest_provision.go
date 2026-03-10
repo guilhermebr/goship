@@ -129,7 +129,7 @@ func buildVirtCustomizeArgs(opts GuestProvisionOptions, serviceScriptPath, resol
 		"--run-command", "rc-update add goship-init default",
 		"--upload", resolvPath + ":/etc/resolv.conf",
 		// Auto-login on serial console (ttyS0) for the goship user so
-		// `goshipctl project console` drops directly into a shell.
+		// `goship project console` drops directly into a shell.
 		// BusyBox getty uses -n (no login prompt) + -l (custom login program).
 		"--write", autologinScript + ":" + autologinScriptContent,
 		"--chmod", "0755:" + autologinScript,

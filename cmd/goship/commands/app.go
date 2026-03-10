@@ -292,7 +292,7 @@ func printAppCreated(out io.Writer, app *entities.AppSpec, projectName string) {
 	if len(app.Ports) > 0 {
 		fmt.Fprintf(out, "  Ports: %s\n", formatPorts(app.Ports))
 	}
-	fmt.Fprintf(out, "\nUse 'goshipctl app deploy %s %s' to start it.\n", projectName, app.Name)
+	fmt.Fprintf(out, "\nUse 'goship app deploy %s %s' to start it.\n", projectName, app.Name)
 }
 
 func runAppCreateAPI(cmd *cobra.Command, projectName, appName string) error {

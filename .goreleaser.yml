@@ -5,9 +5,9 @@ before:
     - go mod tidy
 
 builds:
-  - id: goshipctl
-    main: ./cmd/goshipctl
-    binary: goshipctl
+  - id: goship
+    main: ./cmd/goship
+    binary: goship
     env:
       - CGO_ENABLED=1
     tags:
@@ -40,16 +40,17 @@ builds:
       - -X main.BuildTime={{.Date}}
 
 archives:
-  - id: goshipctl-archive
+  - id: goship-archive
     ids:
-      - goshipctl
-    name_template: "goshipctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+      - goship
+    name_template: "goship_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     files:
       - README.md
       - LICENSE
       - docs/*
+      - build/goship.service
 
   - id: goship-init-archive
     ids:
@@ -98,8 +99,8 @@ release:
 
     Or manually:
     ```bash
-    tar xzf goshipctl_{{ .Version }}_linux_amd64.tar.gz
-    sudo mv goshipctl /usr/local/bin/
+    tar xzf goship_{{ .Version }}_linux_amd64.tar.gz
+    sudo mv goship /usr/local/bin/
     tar xzf goship-init_{{ .Version }}_linux_amd64.tar.gz
     mkdir -p ~/.goship/bin && mv goship-init ~/.goship/bin/
     ```

@@ -78,7 +78,7 @@ When KVM is not available, GoShip automatically falls back to QEMU TCG (Tiny Cod
 Verify the current mode with:
 
 ```bash
-goshipctl capabilities
+goship capabilities
 # Look for the "CPU Mode" and "KVM" lines
 ```
 
@@ -144,7 +144,7 @@ virsh -c qemu:///system list --all
 ```
 
 Common causes:
-- Base image missing — run `goshipctl image pull`
+- Base image missing — run `goship image pull`
 - Corrupted CoW overlay — delete the project and recreate it
 - Insufficient memory — try `--memory 512` or higher
 
@@ -167,7 +167,7 @@ echo '{"action":"ping"}' | socat - UNIX-CONNECT:$HOME/.goship/vms/<project>/gosh
 virsh -c qemu:///system dumpxml goship-<project> | grep -A3 'channel type'
 
 # Check GoShip Init logs via the VM console
-goshipctl project console <project>
+goship project console <project>
 # Login: goship / goship
 # Then: cat /var/log/goship-init.log
 ```
@@ -189,13 +189,13 @@ Docker is installed via cloud-init during the first boot, which can take a minut
 
 ```bash
 # View cloud-init logs
-goshipctl project logs <project> cloud-init
+goship project logs <project> cloud-init
 
 # SSH into the VM (if you have the IP) and check Docker
 ssh goship@<vm-ip> 'rc-service docker status'
 
 # Or via console
-goshipctl project console <project>
+goship project console <project>
 # Login: goship / goship
 # Then: rc-service docker status
 ```
@@ -216,7 +216,7 @@ If Docker installation failed:
 
 ```bash
 # Check DNS inside the VM
-goshipctl project console <project>
+goship project console <project>
 # Login: goship / goship
 # Then:
 cat /etc/resolv.conf
@@ -345,7 +345,7 @@ qemu-img info ~/.goship/images/goship-vm.qcow2
 
 ```bash
 # Open a console
-goshipctl project console <project>
+goship project console <project>
 # Login: goship / goship
 
 # Once inside:

@@ -1,5 +1,4 @@
-// GoShip API server (goshipd).
-package main
+package commands
 
 import (
 	"context"
@@ -12,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ardanlabs/conf/v3"
+	"github.com/spf13/cobra"
 
 	"github.com/guilhermebr/goship/internal/agent/runtime"
 	"github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
@@ -22,49 +21,29 @@ import (
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
 
-var (
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildTime = "unknown"
-)
+// serverCmd starts the GoShip API server and reverse proxy.
+var serverCmd = &cobra.Command{
+	Use:   "server",
+	Short: "Start the GoShip API server and reverse proxy",
+	Long: `Start the GoShip API server (default :8080) and reverse proxy (default :8081).
 
-type Config struct {
-	Addr               string `conf:"default::8080"`
-	ProxyAddr          string `conf:"default::8081"`
-	DataDir            string `conf:"default:~/.goship"`
-	InitBinaryPath     string `conf:"default:./bin/goship-init"`
-	SkipGuestProvision bool   `conf:"default:false"`
-	InstallDocker      bool   `conf:"default:true"`
-	LibvirtURI         string `conf:"default:qemu:///system"`
-	NetworkType        string
-	NetworkSource      string
-}
-
-func main() {
-	if err := run(); err != nil {
-		log.Fatal(err)
-	}
+The server provides a REST API for managing projects and apps, and a reverse
+proxy that routes HTTP traffic to apps running inside VMs based on domain names.`,
+	RunE: runServer,
+	// Override parent's PersistentPreRunE/PersistentPostRunE — the server
+	// manages its own lifecycle (runtime, store, shutdown).
+	PersistentPreRunE:  func(cmd *cobra.Command, args []string) error { return nil },
+	PersistentPostRunE: func(cmd *cobra.Command, args []string) error { return nil },
 }
 
 //nolint:funlen // server startup wiring
-func run() error {
-	var cfg Config
+func runServer(cmd *cobra.Command, args []string) error {
+	logger := log.New(os.Stdout, "goship: ", log.LstdFlags)
 
-	help, err := conf.Parse("GOSHIP", &cfg)
-	if err != nil {
-		if errors.Is(err, conf.ErrHelpWanted) {
-			fmt.Println(help)
-			return nil
-		}
-		return fmt.Errorf("parsing config: %w", err)
-	}
-
-	logger := log.New(os.Stdout, "goshipd: ", log.LstdFlags)
-
-	logger.Printf("goshipd %s (%s) built %s", Version, Commit, BuildTime)
+	logger.Printf("goship server %s (%s) built %s", version, commit, buildTime)
 
 	// Initialize state store.
-	store, err := state.NewStore(cfg.DataDir)
+	serverStore, err := state.NewStore(cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize state store: %w", err)
 	}
@@ -91,26 +70,26 @@ func run() error {
 		opts = append(opts, runtime.WithNetwork(netType, netSource))
 	}
 
-	rt, err := libvirt.New(opts...)
+	serverRT, err := libvirt.New(opts...)
 	if err != nil {
 		return fmt.Errorf("failed to initialize libvirt runtime: %w", err)
 	}
 	defer func() {
-		if closeErr := rt.Close(); closeErr != nil {
+		if closeErr := serverRT.Close(); closeErr != nil {
 			logger.Printf("failed to close runtime: %v", closeErr)
 		}
 	}()
 
 	// Reconcile state with libvirt on startup.
-	reconcileState(store, rt, logger)
+	serverReconcileState(serverStore, serverRT, logger)
 
 	// Create route table and API server.
 	routes := proxy.NewRouteTable()
-	srv := apiserver.New(store, rt, logger, routes)
+	srv := apiserver.New(serverStore, serverRT, logger, routes)
 	srv.RebuildRoutes()
 
 	httpServer := &http.Server{
-		Addr:              cfg.Addr,
+		Addr:              cfg.ServerAddr,
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -127,7 +106,7 @@ func run() error {
 	// Start server in a goroutine.
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Printf("listening on %s", cfg.Addr)
+		logger.Printf("listening on %s", cfg.ServerAddr)
 		if listenErr := httpServer.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 			errCh <- listenErr
 		}
@@ -160,20 +139,20 @@ func run() error {
 	return nil
 }
 
-// reconcileState synchronizes the state store with actual libvirt domain states.
-func reconcileState(store *state.Store, rt *libvirt.Runtime, logger *log.Logger) {
+// serverReconcileState synchronizes the state store with actual libvirt domain states.
+func serverReconcileState(s *state.Store, r *libvirt.Runtime, logger *log.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	projects := store.ListProjects()
+	projects := s.ListProjects()
 	for _, project := range projects {
-		instance := store.GetInstance(project.ID)
+		instance := s.GetInstance(project.ID)
 		if instance == nil {
 			continue
 		}
 
 		// Load all instances into the runtime so it knows about them.
-		rt.LoadInstance(instance)
+		r.LoadInstance(instance)
 
 		switch instance.State {
 		case entities.InstanceStateRunning, entities.InstanceStateStarting, entities.InstanceStateStopping:
@@ -182,7 +161,7 @@ func reconcileState(store *state.Store, rt *libvirt.Runtime, logger *log.Logger)
 		}
 
 		oldState := instance.State
-		status, err := rt.GetInstanceStatus(ctx, instance.ID)
+		status, err := r.GetInstanceStatus(ctx, instance.ID)
 		if err != nil {
 			continue
 		}
@@ -192,30 +171,14 @@ func reconcileState(store *state.Store, rt *libvirt.Runtime, logger *log.Logger)
 		}
 
 		instance.State = status.State
-		_ = store.UpdateInstance(instance)
+		_ = s.UpdateInstance(instance)
 
 		newProjectState := mapInstanceToProjectState(status.State)
 		if newProjectState != project.State {
 			project.State = newProjectState
-			_ = store.UpdateProject(project)
+			_ = s.UpdateProject(project)
 		}
 
 		logger.Printf("reconciled project %s: %s -> %s", project.Name, oldState, status.State)
-	}
-}
-
-// mapInstanceToProjectState derives the project state from an instance state.
-func mapInstanceToProjectState(is entities.InstanceState) entities.ProjectState {
-	switch is {
-	case entities.InstanceStateRunning:
-		return entities.ProjectStateRunning
-	case entities.InstanceStateStopped:
-		return entities.ProjectStateStopped
-	case entities.InstanceStateStopping:
-		return entities.ProjectStateStopping
-	case entities.InstanceStateFailed:
-		return entities.ProjectStateFailed
-	default:
-		return entities.ProjectStatePending
 	}
 }

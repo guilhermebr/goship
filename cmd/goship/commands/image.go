@@ -87,7 +87,7 @@ func runImagePull(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Join(vms, ", "))
 			fmt.Fprint(
 				cmd.OutOrStdout(),
-				"  Run 'goshipctl vm destroy <name>' then 'goshipctl vm create <name>' to recreate\n\n",
+				"  Run 'goship vm destroy <name>' then 'goship vm create <name>' to recreate\n\n",
 			)
 		}
 	}
@@ -131,7 +131,7 @@ func runImageBuildCmd(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Join(vms, ", "))
 			fmt.Fprint(
 				cmd.OutOrStdout(),
-				"  Run 'goshipctl vm destroy <name>' then 'goshipctl vm create <name>' to recreate\n\n",
+				"  Run 'goship vm destroy <name>' then 'goship vm create <name>' to recreate\n\n",
 			)
 		}
 	}

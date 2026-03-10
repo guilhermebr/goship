@@ -109,7 +109,7 @@ func (s *Server) handleProxyRoutes(w http.ResponseWriter, _ *http.Request) {
 
 // RebuildRoutes scans the state store and re-populates the proxy route table
 // for all running instances that have apps with domains. Call this on startup
-// so routes survive a goshipd restart.
+// so routes survive a goship server restart.
 func (s *Server) RebuildRoutes() {
 	if s.proxyRoutes == nil {
 		return

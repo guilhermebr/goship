@@ -1,0 +1,12 @@
+[Unit]
+Description=GoShip - VM-centric Application Control Plane
+After=network-online.target libvirtd.service
+Requires=libvirtd.service
+
+[Service]
+ExecStart=/usr/local/bin/goship server
+Restart=on-failure
+EnvironmentFile=-/etc/goship/goship.env
+
+[Install]
+WantedBy=multi-user.target

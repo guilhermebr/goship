@@ -664,7 +664,7 @@ func runProjectEdit(cmd *cobra.Command, args []string) error {
 	// Check VM is stopped.
 	if instance.State != entities.InstanceStateStopped {
 		return fmt.Errorf(
-			"VM must be stopped before editing (current state: %s); run 'goshipctl project stop %s' first",
+			"VM must be stopped before editing (current state: %s); run 'goship project stop %s' first",
 			instance.State,
 			name,
 		)
@@ -723,7 +723,7 @@ func runProjectEdit(cmd *cobra.Command, args []string) error {
 	for _, c := range changes {
 		fmt.Fprintln(out, c)
 	}
-	fmt.Fprintf(out, "\nStart the VM to apply changes: goshipctl project start %s\n", name)
+	fmt.Fprintf(out, "\nStart the VM to apply changes: goship project start %s\n", name)
 
 	return nil
 }
@@ -759,7 +759,7 @@ func runProjectEditAPI(cmd *cobra.Command, name string) error {
 	fmt.Fprintf(out, "  CPU:    %.0f cores\n", resp.Resources.CPU)
 	fmt.Fprintf(out, "  Memory: %d MB\n", resp.Resources.MemoryMB)
 	fmt.Fprintf(out, "  Disk:   %d MB\n", resp.Resources.DiskMB)
-	fmt.Fprintf(out, "\nStart the VM to apply changes: goshipctl project start %s\n", name)
+	fmt.Fprintf(out, "\nStart the VM to apply changes: goship project start %s\n", name)
 	return nil
 }
 

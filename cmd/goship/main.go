@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/guilhermebr/goship/cmd/goshipctl/commands"
+	"github.com/guilhermebr/goship/cmd/goship/commands"
 )
 
 var (

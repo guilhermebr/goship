@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
@@ -41,12 +42,14 @@ func SetVersion(v, c, b string) {
 
 // rootCmd is the base command.
 var rootCmd = &cobra.Command{
-	Use:   "goshipctl",
-	Short: "GoShip CLI - Self-hosted application platform",
+	Use:   "goship",
+	Short: "GoShip - Self-hosted VM-centric application platform",
 	Long: `GoShip is a self-hosted, project-based application platform.
 
 Each project runs in its own VM, providing strong isolation.
-Apps are deployed inside project VMs.`,
+Apps are deployed inside project VMs.
+
+Use "goship server" to start the API server, or run CLI commands directly.`,
 	PersistentPreRunE:  initResources,
 	PersistentPostRunE: cleanupResources,
 	SilenceUsage:       true,
@@ -80,6 +83,9 @@ func init() {
 	rootCmd.PersistentFlags().
 		StringVar(&cfg.ApiUrl, "api-url", cfg.ApiUrl,
 			"GoShip API server URL (env: GOSHIP_API_URL)")
+	rootCmd.PersistentFlags().
+		BoolVar(&cfg.Direct, "direct", cfg.Direct,
+			"Force direct libvirt mode, skip server auto-detection (env: GOSHIP_DIRECT)")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
@@ -91,6 +97,7 @@ func init() {
 	rootCmd.AddCommand(composeCmd)
 	rootCmd.AddCommand(envCmd)
 	rootCmd.AddCommand(domainCmd)
+	rootCmd.AddCommand(serverCmd)
 }
 
 const (
@@ -170,10 +177,21 @@ func initResources(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// API mode: use HTTP client instead of local store/runtime.
+	// 1. Explicit --api-url always wins.
 	if cfg.ApiUrl != "" {
 		apiClient = client.New(cfg.ApiUrl)
 		return nil
+	}
+
+	// 2. --direct skips server auto-detection.
+	if !cfg.Direct {
+		// 3. Auto-detect running server on localhost.
+		if serverURL := detectServer(); serverURL != "" {
+			apiClient = client.New(serverURL)
+			printVerbose("auto-connected to server at %s", serverURL)
+			return nil
+		}
+		printVerbose("no running server detected, using direct libvirt mode")
 	}
 
 	var err error
@@ -232,6 +250,25 @@ func initResources(cmd *cobra.Command, args []string) error {
 	reconcileState()
 
 	return nil
+}
+
+// detectServer probes the local server healthcheck endpoint.
+// Returns the server URL if reachable, empty string otherwise.
+func detectServer() string {
+	url := fmt.Sprintf("http://localhost%s", cfg.ServerAddr)
+	healthURL := url + "/healthz"
+
+	httpClient := &http.Client{Timeout: 1 * time.Second}
+	resp, err := httpClient.Get(healthURL) //nolint:noctx // fire-and-forget probe
+	if err != nil {
+		return ""
+	}
+	_ = resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return url
+	}
+	return ""
 }
 
 // reconcileState synchronizes the state store with actual libvirt domain states.

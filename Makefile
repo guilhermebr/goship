@@ -1,7 +1,7 @@
 # GoShip Makefile
 
 .PHONY: all build clean test lint fmt vet tidy help install uninstall
-.PHONY: build-goshipctl build-goshipd build-goship-init release-local release-check setup
+.PHONY: build-goship build-goship-init release-local release-check setup
 
 # Go parameters
 GOCMD=go
@@ -13,8 +13,7 @@ GOFMT=gofmt
 GOVET=$(GOCMD) vet
 
 # Binary names
-GOSHIPCTL=goshipctl
-GOSHIPD=goshipd
+GOSHIP=goship
 GOSHIP_INIT=goship-init
 
 # Build directories
@@ -42,19 +41,13 @@ setup:
 all: build
 
 # Build all binaries
-build: build-goshipctl build-goshipd build-goship-init
+build: build-goship build-goship-init
 
-# Build goshipctl CLI
-build-goshipctl:
-	@echo "Building $(GOSHIPCTL)..."
+# Build goship (CLI + API server)
+build-goship:
+	@echo "Building $(GOSHIP)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIPCTL) ./$(CMD_DIR)/$(GOSHIPCTL)
-
-# Build goshipd API server (requires libvirt)
-build-goshipd:
-	@echo "Building $(GOSHIPD)..."
-	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIPD) ./$(CMD_DIR)/$(GOSHIPD)
+	CGO_ENABLED=1 $(GOBUILD) $(LDFLAGS) -tags libvirt_dlopen -o $(BUILD_DIR)/$(GOSHIP) ./$(CMD_DIR)/$(GOSHIP)
 
 # Build goship-init (static binary for use inside VMs)
 build-goship-init:
@@ -97,17 +90,17 @@ tidy:
 install: build
 	@echo "Installing GoShip..."
 	install -d $(BINDIR)
-	install -m 755 $(BUILD_DIR)/$(GOSHIPCTL) $(BINDIR)/$(GOSHIPCTL)
+	install -m 755 $(BUILD_DIR)/$(GOSHIP) $(BINDIR)/$(GOSHIP)
 	install -d $(HOME)/.goship/bin
 	install -m 755 $(BUILD_DIR)/$(GOSHIP_INIT) $(HOME)/.goship/bin/$(GOSHIP_INIT)
 	@echo "GoShip installed successfully."
-	@echo "  $(BINDIR)/$(GOSHIPCTL)"
+	@echo "  $(BINDIR)/$(GOSHIP)"
 	@echo "  $(HOME)/.goship/bin/$(GOSHIP_INIT)"
 
 # Remove installed binaries
 uninstall:
 	@echo "Removing GoShip..."
-	rm -f $(BINDIR)/$(GOSHIPCTL)
+	rm -f $(BINDIR)/$(GOSHIP)
 	rm -f $(HOME)/.goship/bin/$(GOSHIP_INIT)
 	@echo "GoShip uninstalled."
 
@@ -134,8 +127,7 @@ help:
 	@echo ""
 	@echo "  all              - Build all binaries (default)"
 	@echo "  build            - Build all binaries"
-	@echo "  build-goshipctl  - Build goshipctl CLI"
-	@echo "  build-goshipd    - Build goshipd API server (requires libvirt)"
+	@echo "  build-goship     - Build goship (CLI + API server)"
 	@echo "  build-goship-init - Build goship-init (static, for VMs)"
 	@echo "  test             - Run tests"
 	@echo "  test-coverage    - Run tests with coverage"
@@ -154,3 +146,4 @@ help:
 	@echo "Variables:"
 	@echo "  VERSION          - Release version (default: dev)"
 	@echo "  PREFIX           - Install prefix (default: /usr/local)"
+	@echo ""

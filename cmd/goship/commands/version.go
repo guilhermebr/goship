@@ -17,7 +17,7 @@ var versionCmd = &cobra.Command{
 }
 
 func runVersion(cmd *cobra.Command, args []string) {
-	fmt.Printf("goshipctl %s\n", version)
+	fmt.Printf("goship %s\n", version)
 	fmt.Printf("  commit: %s\n", commit)
 	fmt.Printf("  built:  %s\n", buildTime)
 

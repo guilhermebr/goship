@@ -14,4 +14,7 @@ type Config struct {
 	NetworkType        string
 	NetworkSource      string
 	ApiUrl             string //nolint:revive // APIURL would derive env var GOSHIP_APIURL instead of GOSHIP_API_URL
+	Direct             bool   `conf:"default:false"`
+	ServerAddr         string `conf:"default::8080"`
+	ProxyAddr          string `conf:"default::8081"`
 }

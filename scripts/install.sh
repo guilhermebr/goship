@@ -7,7 +7,7 @@
 #
 # Environment variables:
 #   GOSHIP_VERSION      Release tag to install (default: latest)
-#   GOSHIP_INSTALL_DIR  Where to install goshipctl (default: /usr/local/bin)
+#   GOSHIP_INSTALL_DIR  Where to install goship (default: /usr/local/bin)
 #   GOSHIP_SKIP_DEPS    Skip system dependency installation (default: false)
 
 set -euo pipefail
@@ -237,12 +237,12 @@ install_binaries() {
     TMPDIR="$(mktemp -d)"
     local base_url="https://github.com/${GITHUB_REPO}/releases/download/${GOSHIP_VERSION}"
 
-    local goshipctl_archive="goshipctl_${VERSION_NUM}_linux_amd64.tar.gz"
+    local goship_archive="goship_${VERSION_NUM}_linux_amd64.tar.gz"
     local goshipinit_archive="goship-init_${VERSION_NUM}_linux_amd64.tar.gz"
     local checksums_file="checksums.txt"
 
     # Download archives and checksums
-    download "${base_url}/${goshipctl_archive}" "${TMPDIR}/${goshipctl_archive}"
+    download "${base_url}/${goship_archive}" "${TMPDIR}/${goship_archive}"
     download "${base_url}/${goshipinit_archive}" "${TMPDIR}/${goshipinit_archive}"
     download "${base_url}/${checksums_file}" "${TMPDIR}/${checksums_file}"
 
@@ -253,19 +253,19 @@ install_binaries() {
     (
         cd "$TMPDIR"
         # Filter checksums.txt to only the files we downloaded
-        grep -E "(${goshipctl_archive}|${goshipinit_archive})" "${checksums_file}" > verify.txt
+        grep -E "(${goship_archive}|${goshipinit_archive})" "${checksums_file}" > verify.txt
         sha256sum -c verify.txt
     ) || fatal "Checksum verification failed!"
 
     ok "Checksums verified"
 
-    # Extract and install goshipctl
-    info "Installing goshipctl to ${GOSHIP_INSTALL_DIR}/..."
-    tar xzf "${TMPDIR}/${goshipctl_archive}" -C "$TMPDIR"
+    # Extract and install goship
+    info "Installing goship to ${GOSHIP_INSTALL_DIR}/..."
+    tar xzf "${TMPDIR}/${goship_archive}" -C "$TMPDIR"
     maybe_sudo install -d "${GOSHIP_INSTALL_DIR}"
-    maybe_sudo install -m 755 "${TMPDIR}/goshipctl" "${GOSHIP_INSTALL_DIR}/goshipctl"
+    maybe_sudo install -m 755 "${TMPDIR}/goship" "${GOSHIP_INSTALL_DIR}/goship"
 
-    ok "goshipctl installed to ${GOSHIP_INSTALL_DIR}/goshipctl"
+    ok "goship installed to ${GOSHIP_INSTALL_DIR}/goship"
 
     # Extract and install goship-init
     local init_dir="${GOSHIP_HOME}/bin"
@@ -275,6 +275,42 @@ install_binaries() {
     install -m 755 "${TMPDIR}/goship-init" "${init_dir}/goship-init"
 
     ok "goship-init installed to ${init_dir}/goship-init"
+}
+
+# --- Install systemd service --------------------------------------------------
+
+install_service() {
+    if ! command -v systemctl &>/dev/null; then
+        return
+    fi
+
+    info "Installing systemd service..."
+
+    # Extract service file from archive if present, otherwise create it
+    local service_file="${TMPDIR}/build/goship.service"
+    if [ ! -f "$service_file" ]; then
+        service_file="${TMPDIR}/goship.service"
+        cat > "$service_file" <<'SVCEOF'
+[Unit]
+Description=GoShip - VM-centric Application Control Plane
+After=network-online.target libvirtd.service
+Requires=libvirtd.service
+
+[Service]
+ExecStart=/usr/local/bin/goship server
+Restart=on-failure
+EnvironmentFile=-/etc/goship/goship.env
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+    fi
+
+    maybe_sudo install -m 644 "$service_file" /etc/systemd/system/goship.service
+    maybe_sudo systemctl daemon-reload
+
+    ok "systemd service installed (goship.service)"
+    info "  Enable with: sudo systemctl enable --now goship"
 }
 
 # --- Post-install Setup -------------------------------------------------------
@@ -303,7 +339,7 @@ print_summary() {
     echo -e "${GREEN}${BOLD}GoShip ${GOSHIP_VERSION} installed successfully!${NC}"
     echo ""
     echo "  Binaries:"
-    echo "    goshipctl   → ${GOSHIP_INSTALL_DIR}/goshipctl"
+    echo "    goship      → ${GOSHIP_INSTALL_DIR}/goship"
     echo "    goship-init → ${GOSHIP_HOME}/bin/goship-init"
     echo ""
     echo "  Data directories:"
@@ -312,14 +348,17 @@ print_summary() {
     echo ""
     echo -e "${BOLD}Next steps:${NC}"
     echo "  1. Download the base VM image:"
-    echo "       goshipctl image pull"
+    echo "       goship image pull"
     echo ""
-    echo "  2. Create your first project:"
-    echo "       goshipctl project create myapp --cpu 1 --memory 512"
+    echo "  2. Start the server (recommended):"
+    echo "       goship server"
     echo ""
-    echo "  3. Deploy an app:"
-    echo "       goshipctl app create myapp web --image nginx:alpine --port 8080:80"
-    echo "       goshipctl app deploy myapp web"
+    echo "  3. Create your first project:"
+    echo "       goship project create myapp --cpu 1 --memory 512"
+    echo ""
+    echo "  4. Deploy an app:"
+    echo "       goship app create myapp web --image nginx:alpine --port 8080:80"
+    echo "       goship app deploy myapp web"
     echo ""
 
     # Remind about group change if needed
@@ -340,6 +379,7 @@ main() {
     resolve_version
     install_deps
     install_binaries
+    install_service
     post_install
     print_summary
 }

@@ -33,9 +33,9 @@ GoShip is built around a simple model:
 │                  GoShip Control Plane                   │
 │         (Projects, Apps, Nodes, Desired State)          │
 │                                                         │
-│   goshipd (:8080)          goship-proxy (:8081)         │
-│   REST API                 Reverse Proxy                │
-│   (manage projects/apps)   (route HTTP to VM apps)      │
+│   goship server (:8080)      goship proxy (:8081)       │
+│   REST API                   Reverse Proxy              │
+│   (manage projects/apps)     (route HTTP to VM apps)    │
 └───────────────────────────┬─────────────────────────────┘
                             │
                     Desired State
@@ -86,8 +86,8 @@ GoShip is built around a simple model:
 - **Auto network setup** — Ensures the libvirt `default` network is active before VM creation
 - **DAC security labels** — Numeric UID/GID labels for precise QEMU file access control
 - **Environment variables** — Project-level env vars inherited by all apps, with AES-256-GCM vault encryption for secrets
-- **REST API server** — `goshipd` serves a JSON API for project and app management
-- **API mode CLI** — Set `GOSHIP_API_URL` to use `goshipctl` against a remote `goshipd` instead of local libvirt
+- **REST API server** — `goship server` serves a JSON API for project and app management
+- **Smart API mode** — CLI auto-detects a running server; use `--direct` to force direct libvirt mode
 - **Reverse proxy** — Domain-based HTTP routing to apps inside VMs, with automatic route lifecycle management
 
 ---
@@ -118,61 +118,66 @@ sudo make install
 
 ```bash
 # Download base VM image
-goshipctl image pull
+goship image pull
+
+# Start the server (recommended — enables API mode + reverse proxy)
+goship server &
 
 # Create a project (provisions a VM with Docker)
-goshipctl project create myapp --cpu 1 --memory 512
+goship project create myapp --cpu 1 --memory 512
 
 # Set project-level environment variables (inherited by all apps)
-goshipctl env set myapp APP_ENV=production LOG_LEVEL=info
-goshipctl env set myapp DB_PASSWORD=s3cret --secret
-goshipctl env list myapp
-
-# Or use the REST API server
-goshipd &
-export GOSHIP_API_URL=http://localhost:8080
+goship env set myapp APP_ENV=production LOG_LEVEL=info
+goship env set myapp DB_PASSWORD=s3cret --secret
+goship env list myapp
 
 # Assign domains for reverse proxy routing
-goshipctl domain set myapp myapp.local
-goshipctl domain list myapp
+goship domain set myapp myapp.local
+goship domain list myapp
 
 # Deploy a container app (inherits project env vars)
 # After deploy, accessible at web.myapp.local:8081 via reverse proxy
-goshipctl app create myapp web --image nginx:alpine --port 8080:80
-goshipctl app deploy myapp web
+goship app create myapp web --image nginx:alpine --port 8080:80
+goship app deploy myapp web
 
 # Deploy using a locally built Docker image (pushed into VM automatically)
-goshipctl app create myapp api --image myapi:latest --port 3000:3000
-goshipctl app deploy myapp api --local-image
+goship app create myapp api --image myapi:latest --port 3000:3000
+goship app deploy myapp api --local-image
 
 # Deploy a process-mode app (binary uploaded into VM automatically)
-goshipctl app create myapp worker --mode process --binary ./bin/myworker --restart-policy on-failure
-goshipctl app deploy myapp worker
+goship app create myapp worker --mode process --binary ./bin/myworker --restart-policy on-failure
+goship app deploy myapp worker
 
 # Check status and logs
-goshipctl app list myapp
-goshipctl app logs myapp web
-goshipctl app logs myapp worker --follow
+goship app list myapp
+goship app logs myapp web
+goship app logs myapp worker --follow
 
 # Deploy multi-service apps with docker-compose.yml
 # Services with build: are built locally and pushed into the VM
-goshipctl compose up myapp -f docker-compose.yml
-goshipctl compose ps myapp
-goshipctl compose down myapp
+goship compose up myapp -f docker-compose.yml
+goship compose ps myapp
+goship compose down myapp
 
 # Resize VM resources (must stop first)
-goshipctl project stop myapp
-goshipctl project edit myapp --cpu 2 --memory 1024 --disk 8192
-goshipctl project start myapp
+goship project stop myapp
+goship project edit myapp --cpu 2 --memory 1024 --disk 8192
+goship project start myapp
 
 # Edit an app and redeploy
-goshipctl app edit myapp web --port 9090:80
-goshipctl app deploy myapp web
+goship app edit myapp web --port 9090:80
+goship app deploy myapp web
+
+# Use direct libvirt mode (skip server)
+goship --direct project list
+
+# Use explicit remote server
+GOSHIP_API_URL=http://remote:8080 goship project list
 
 # Clean up
-goshipctl app delete myapp web
-goshipctl app delete myapp worker
-goshipctl project delete myapp
+goship app delete myapp web
+goship app delete myapp worker
+goship project delete myapp
 ```
 
 See the [Getting Started guide](docs/getting-started.md) for the full walkthrough.
