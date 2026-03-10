@@ -396,7 +396,39 @@ func (r *Runtime) StopInstance(ctx context.Context, instanceID string) error {
 	info.instance.UpdatedAt = time.Now()
 	r.mu.Unlock()
 
+	// Wait for the domain to actually reach the shutoff state.
+	// domain.Shutdown() sends an ACPI signal and returns immediately.
+	if err := r.waitForShutoff(ctx, domain); err != nil {
+		return fmt.Errorf("failed waiting for domain to stop: %w", err)
+	}
+
+	r.mu.Lock()
+	info.instance.State = entities.InstanceStateStopped
+	info.instance.UpdatedAt = time.Now()
+	r.mu.Unlock()
+
 	return nil
+}
+
+// waitForShutoff polls the domain state until it reaches shutoff or the context expires.
+func (r *Runtime) waitForShutoff(ctx context.Context, domain *libvirt.Domain) error {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			state, _, err := domain.GetState()
+			if err != nil {
+				return fmt.Errorf("failed to get domain state: %w", err)
+			}
+			if state == libvirt.DOMAIN_SHUTOFF {
+				return nil
+			}
+		}
+	}
 }
 
 // StartInstance starts a previously stopped VM instance and waits for it to boot.

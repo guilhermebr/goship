@@ -1,6 +1,6 @@
 # GoShip Makefile
 
-.PHONY: all build clean test lint fmt vet tidy help install uninstall
+.PHONY: all build clean test test-integration lint fmt vet tidy help install uninstall
 .PHONY: build-goship build-goship-init release-local release-check setup
 
 # Go parameters
@@ -59,6 +59,11 @@ build-goship-init:
 test:
 	@echo "Running tests..."
 	$(GOTEST) -v -race ./...
+
+# Run integration tests (requires libvirt + KVM)
+test-integration:
+	@echo "Running integration tests (requires libvirt + KVM)..."
+	CGO_ENABLED=1 $(GOTEST) -v -tags "integration libvirt_dlopen" -timeout 30m -count=1 ./tests/integration/...
 
 # Run tests with coverage
 test-coverage:
