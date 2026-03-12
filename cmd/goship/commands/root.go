@@ -99,6 +99,7 @@ func init() {
 	rootCmd.AddCommand(domainCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(nodeCmd)
+	rootCmd.AddCommand(agentCmd)
 }
 
 const (

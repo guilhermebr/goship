@@ -1101,3 +1101,104 @@ func TestNodeDrain_NotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
+
+func TestNodeHeartbeat(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	before := time.Now().Add(-time.Minute)
+	_ = store.SetNode(&entities.Node{
+		ID:            "hb-node",
+		Hostname:      "worker-1",
+		Status:        entities.NodeStatusOffline,
+		LastHeartbeat: before,
+	})
+
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes/hb-node/heartbeat", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var node entities.Node
+	if err := json.NewDecoder(w.Body).Decode(&node); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if node.Status != entities.NodeStatusOnline {
+		t.Fatalf("expected status 'online', got %s", node.Status)
+	}
+	if !node.LastHeartbeat.After(before) {
+		t.Fatalf("expected LastHeartbeat to be updated, got %v", node.LastHeartbeat)
+	}
+
+	// Verify in store.
+	stored, _ := store.GetNode("hb-node")
+	if stored.Status != entities.NodeStatusOnline {
+		t.Fatalf("expected stored status 'online', got %s", stored.Status)
+	}
+}
+
+func TestNodeHeartbeat_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+	w := doRequest(srv, http.MethodPost, "/api/v1/nodes/ghost/heartbeat", nil)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestNodeDesiredState(t *testing.T) {
+	srv, store := newTestServerWithStore(t)
+
+	_ = store.SetNode(&entities.Node{ID: "ds-node", Hostname: "worker-1", Status: entities.NodeStatusOnline})
+
+	project, err := store.CreateProject("test-project", entities.RuntimeQEMU, entities.Resources{CPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	if err := store.SetApp(project.ID, &entities.AppSpec{
+		Name:          "web",
+		ExecutionMode: entities.ExecutionModeContainer,
+		Image:         "nginx:alpine",
+		Replicas:      1,
+		CreatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to set app: %v", err)
+	}
+
+	w := doRequest(srv, http.MethodGet, "/api/v1/nodes/ds-node/desired-state", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var ds apiserver.DesiredState
+	if err := json.NewDecoder(w.Body).Decode(&ds); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(ds.Projects) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(ds.Projects))
+	}
+	if ds.Projects[0].Name != "test-project" {
+		t.Fatalf("expected project name 'test-project', got %s", ds.Projects[0].Name)
+	}
+	apps, ok := ds.Apps[project.ID]
+	if !ok {
+		t.Fatal("expected apps for project ID")
+	}
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+	if apps[0].Name != "web" {
+		t.Fatalf("expected app name 'web', got %s", apps[0].Name)
+	}
+}
+
+func TestNodeDesiredState_NotFound(t *testing.T) {
+	srv := newTestServer(t)
+	w := doRequest(srv, http.MethodGet, "/api/v1/nodes/ghost/desired-state", nil)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}

@@ -67,6 +67,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/nodes/{id}", s.logMiddleware(s.handleNodeGet))
 	s.mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.logMiddleware(s.handleNodeDelete))
 	s.mux.HandleFunc("POST /api/v1/nodes/{id}/drain", s.logMiddleware(s.handleNodeDrain))
+	s.mux.HandleFunc("POST /api/v1/nodes/{id}/heartbeat", s.logMiddleware(s.handleNodeHeartbeat))
+	s.mux.HandleFunc("GET /api/v1/nodes/{id}/desired-state", s.logMiddleware(s.handleNodeDesiredState))
 
 	// Apps
 	s.mux.HandleFunc("PUT /api/v1/projects/{id}/apps/{name}", s.logMiddleware(s.handleAppUpdate))

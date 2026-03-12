@@ -43,3 +43,17 @@ func (c *Client) DeleteNode(idOrHostname string) error {
 func (c *Client) DrainNode(idOrHostname string) error {
 	return c.post(fmt.Sprintf("/api/v1/nodes/%s/drain", idOrHostname), nil, nil)
 }
+
+// Heartbeat sends a heartbeat for the given node.
+func (c *Client) Heartbeat(idOrHostname string) error {
+	return c.post(fmt.Sprintf("/api/v1/nodes/%s/heartbeat", idOrHostname), nil, nil)
+}
+
+// GetDesiredState returns the desired state for the given node.
+func (c *Client) GetDesiredState(idOrHostname string) (*apiserver.DesiredState, error) {
+	var ds apiserver.DesiredState
+	if err := c.get(fmt.Sprintf("/api/v1/nodes/%s/desired-state", idOrHostname), &ds); err != nil {
+		return nil, err
+	}
+	return &ds, nil
+}

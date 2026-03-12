@@ -101,6 +101,63 @@ func (s *Server) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// DesiredState represents the desired state of all projects and apps for a node.
+type DesiredState struct {
+	Projects []*entities.Project            `json:"projects"`
+	Apps     map[string][]*entities.AppSpec `json:"apps"`
+}
+
+func (s *Server) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	node, err := s.store.GetNode(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	now := time.Now()
+	node.LastHeartbeat = now
+	node.Status = entities.NodeStatusOnline
+	node.UpdatedAt = now
+
+	if err := s.store.SetNode(node); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update heartbeat: %v", err))
+		return
+	}
+
+	s.logger.Printf("heartbeat received: %s (%s)", node.Hostname, node.ID)
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) handleNodeDesiredState(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, err := s.store.GetNode(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// For now, return all projects and apps (scheduling comes in Step 23).
+	projects := s.store.ListProjects()
+	apps := make(map[string][]*entities.AppSpec, len(projects))
+	for _, p := range projects {
+		apps[p.ID] = s.store.GetApps(p.ID)
+	}
+
+	writeJSON(w, http.StatusOK, DesiredState{
+		Projects: projects,
+		Apps:     apps,
+	})
+}
+
 func (s *Server) handleNodeDrain(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	node, err := s.store.GetNode(id)
