@@ -13,7 +13,6 @@ const (
 	imageGoshipLatest = "goship-app:latest"
 )
 
-//nolint:cyclop
 func TestParseBytes_MultiService(t *testing.T) {
 	yaml := []byte(`
 version: "3"

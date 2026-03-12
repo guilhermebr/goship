@@ -78,8 +78,8 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	netType := cfg.NetworkType
 	netSource := cfg.NetworkSource
 	if netType != "" {
-		if netType == "network" && netSource == "" { //nolint:goconst // matches existing pattern in root.go/server.go
-			netSource = "default" //nolint:goconst // matches existing pattern
+		if netType == netTypeNetwork && netSource == "" {
+			netSource = netSourceDefault
 		}
 		opts = append(opts, runtime.WithNetwork(netType, netSource))
 	}

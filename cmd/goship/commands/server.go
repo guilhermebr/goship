@@ -64,8 +64,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	netType := cfg.NetworkType
 	netSource := cfg.NetworkSource
 	if netType != "" {
-		if netType == "network" && netSource == "" {
-			netSource = "default"
+		if netType == netTypeNetwork && netSource == "" {
+			netSource = netSourceDefault
 		}
 		opts = append(opts, runtime.WithNetwork(netType, netSource))
 	}

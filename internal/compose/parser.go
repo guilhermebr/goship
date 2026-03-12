@@ -34,9 +34,9 @@ func WithBaseDir(dir string) ParseOption {
 
 // Parse reads a docker-compose.yml file and returns a list of AppSpecs, build contexts, and warnings.
 // It automatically resolves env_file paths relative to the compose file's directory.
-//
-//nolint:revive // Four return values needed for complete compose parsing result
-func Parse(path string) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
+func Parse(
+	path string,
+) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to read compose file: %w", err)
@@ -51,7 +51,7 @@ func Parse(path string) (apps []entities.AppSpec, builds map[string]BuildContext
 // ParseBytes parses docker-compose.yml content and returns a list of AppSpecs, build contexts, and warnings.
 // Use WithBaseDir option to enable env_file resolution relative to the compose file directory.
 //
-//nolint:funlen,gocognit,gocyclo,cyclop,revive // Compose parsing inherently complex with multiple field transformations
+//nolint:funlen,gocognit,gocyclo,cyclop // Compose parsing inherently complex with multiple field transformations
 func ParseBytes(
 	data []byte, opts ...ParseOption,
 ) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {

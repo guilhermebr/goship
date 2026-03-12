@@ -166,6 +166,7 @@ linters:
           - maintidx
           - gocognit
           - gocyclo
+          - cyclop
           - errcheck
           - errchkjson
           - goconst
@@ -192,6 +193,16 @@ linters:
           - revive
         path: internal/agent/runtime/mock/
         text: "function-result-limit"
+      # compose parser returns (apps, builds, warnings, err) — all needed
+      - linters:
+          - revive
+        path: internal/compose/parser\.go
+        text: "function-result-limit"
+      # showValues is a query param toggle, not a control flag
+      - linters:
+          - revive
+        path: internal/client/env\.go
+        text: "flag-parameter"
 
 issues:
   max-issues-per-linter: 0

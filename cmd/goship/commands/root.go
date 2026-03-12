@@ -100,6 +100,7 @@ func init() {
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(nodeCmd)
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(deployCmd)
 }
 
 const (
@@ -109,6 +110,10 @@ const (
 	cmdEnv     = "env"
 	cmdDomain  = "domain"
 	cmdNode    = "node"
+	cmdDeploy  = "deploy"
+
+	netTypeNetwork   = "network"
+	netSourceDefault = "default"
 )
 
 // needsStore returns true if the command requires the state store.
@@ -117,9 +122,11 @@ func needsStore(cmd *cobra.Command) bool {
 	if cmd.Parent() != nil {
 		parent = cmd.Parent().Name()
 	}
+	name := cmd.Name()
 	return parent == cmdProject || parent == cmdApp || parent == cmdCompose || parent == cmdEnv ||
 		parent == cmdDomain ||
-		parent == cmdNode
+		parent == cmdNode ||
+		name == cmdDeploy
 }
 
 // needsRuntime returns true if the command requires the libvirt runtime.
@@ -152,6 +159,11 @@ func needsRuntime(cmd *cobra.Command) bool {
 		case "up", "down":
 			return true
 		}
+	}
+
+	// Deploy is a top-level command that needs the runtime.
+	if name == cmdDeploy {
+		return true
 	}
 
 	return false
@@ -232,8 +244,8 @@ func initResources(cmd *cobra.Command, args []string) error {
 	}
 
 	if netType != "" {
-		if netType == "network" && netSource == "" {
-			netSource = "default"
+		if netType == netTypeNetwork && netSource == "" {
+			netSource = netSourceDefault
 		}
 		opts = append(opts, runtime.WithNetwork(netType, netSource))
 	}
