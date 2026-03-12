@@ -731,3 +731,48 @@ services:
 		t.Errorf("TEMPORAL_POSTGRES_USER = %q, want %q", env["TEMPORAL_POSTGRES_USER"], "temporal")
 	}
 }
+
+func TestParseBytes_BuildWithRegistry(t *testing.T) {
+	yaml := []byte(`
+services:
+  web:
+    build: .
+    ports:
+      - "8080:80"
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "3000:3000"
+`)
+
+	apps, builds, _, err := ParseBytes(yaml, WithRegistry("localhost:5000", "myproject"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(apps) != 2 {
+		t.Fatalf("expected 2 apps, got %d", len(apps))
+	}
+
+	// api comes first (sorted alphabetically).
+	wantAPI := "localhost:5000/goship-myproject/api:latest"
+	if apps[0].Image != wantAPI {
+		t.Errorf("api image = %q, want %q", apps[0].Image, wantAPI)
+	}
+	if bc, ok := builds["api"]; !ok {
+		t.Error("expected BuildContext for 'api'")
+	} else if bc.ImageName != wantAPI {
+		t.Errorf("api build image name = %q, want %q", bc.ImageName, wantAPI)
+	}
+
+	wantWeb := "localhost:5000/goship-myproject/web:latest"
+	if apps[1].Image != wantWeb {
+		t.Errorf("web image = %q, want %q", apps[1].Image, wantWeb)
+	}
+	if bc, ok := builds["web"]; !ok {
+		t.Error("expected BuildContext for 'web'")
+	} else if bc.ImageName != wantWeb {
+		t.Errorf("web build image name = %q, want %q", bc.ImageName, wantWeb)
+	}
+}

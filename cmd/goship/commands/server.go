@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/guilhermebr/goship/internal/agent/runtime/libvirt"
 	apiserver "github.com/guilhermebr/goship/internal/api"
 	"github.com/guilhermebr/goship/internal/proxy"
+	"github.com/guilhermebr/goship/internal/registry"
 	"github.com/guilhermebr/goship/internal/shared/state"
 	"github.com/guilhermebr/goship/pkg/domain/entities"
 )
@@ -49,12 +51,18 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize libvirt runtime.
+	// Compute VM-visible registry address using the host bridge IP.
+	// VMs can't use localhost, so we use the default libvirt bridge IP (192.168.122.1).
+	vmRegistryAddr := fmt.Sprintf("192.168.122.1:%s",
+		strings.TrimPrefix(cfg.RegistryAddr, ":"))
+
 	opts := []runtime.RuntimeOption{
 		runtime.WithDataDir(cfg.DataDir),
 		runtime.WithVMImage(cfg.DataDir + "/images/goship-vm.qcow2"),
 		runtime.WithInitBinary(cfg.InitBinaryPath),
 		runtime.WithProvisionGuest(!cfg.SkipGuestProvision),
 		runtime.WithInstallDocker(cfg.InstallDocker),
+		runtime.WithRegistryAddr(vmRegistryAddr),
 	}
 
 	if cfg.LibvirtURI != "" {
@@ -83,9 +91,15 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Reconcile state with libvirt on startup.
 	serverReconcileState(serverStore, serverRT, logger)
 
+	// Initialize embedded container registry.
+	reg, err := registry.New(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize registry: %w", err)
+	}
+
 	// Create route table and API server.
 	routes := proxy.NewRouteTable()
-	srv := apiserver.New(serverStore, serverRT, logger, routes)
+	srv := apiserver.New(serverStore, serverRT, logger, routes, reg)
 	srv.RebuildRoutes()
 
 	httpServer := &http.Server{
@@ -100,6 +114,19 @@ func runServer(cmd *cobra.Command, args []string) error {
 		logger.Printf("proxy listening on %s", cfg.ProxyAddr)
 		if proxyErr := proxyServer.ListenAndServe(); proxyErr != nil && !errors.Is(proxyErr, http.ErrServerClosed) {
 			logger.Printf("proxy error: %v", proxyErr)
+		}
+	}()
+
+	// Start embedded container registry.
+	registryServer := &http.Server{
+		Addr:              cfg.RegistryAddr,
+		Handler:           reg.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		logger.Printf("registry listening on %s", cfg.RegistryAddr)
+		if regErr := registryServer.ListenAndServe(); regErr != nil && !errors.Is(regErr, http.ErrServerClosed) {
+			logger.Printf("registry error: %v", regErr)
 		}
 	}()
 
@@ -129,6 +156,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	if err := proxyServer.Close(); err != nil {
 		logger.Printf("failed to close proxy: %v", err)
+	}
+
+	if err := registryServer.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("failed to shutdown registry: %v", err)
 	}
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

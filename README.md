@@ -36,6 +36,9 @@ GoShip is built around a simple model:
 │   goship server (:8080)      goship proxy (:8081)       │
 │   REST API                   Reverse Proxy              │
 │   (manage projects/apps)     (route HTTP to VM apps)    │
+│                                                         │
+│   Registry (:5000)                                      │
+│   (embedded OCI container registry)                     │
 └───────────────────────────┬─────────────────────────────┘
                             │
                     Desired State
@@ -89,6 +92,7 @@ GoShip is built around a simple model:
 - **REST API server** — `goship server` serves a JSON API for project and app management
 - **Smart API mode** — CLI auto-detects a running server; use `--direct` to force direct libvirt mode
 - **Reverse proxy** — Domain-based HTTP routing to apps inside VMs, with automatic route lifecycle management
+- **Embedded container registry** — OCI-compliant registry on `:5000` with disk-based storage, layer deduplication, and automatic VM insecure-registries configuration via cloud-init
 - **Node management** — Register, list, inspect, drain, and remove cluster nodes
 
 ---
@@ -194,6 +198,7 @@ See the [Getting Started guide](docs/getting-started.md) for the full walkthroug
 | [CLI Reference](docs/cli-reference.md) | Every command, flag, and example |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
 | [Design Document](docs/DESIGN.md) | Full architecture RFC |
+| [Registry](docs/registry.md) | Embedded OCI container registry |
 | [Decision Log](DECISION-LOG.md) | Architectural decisions and their rationale |
 
 ---

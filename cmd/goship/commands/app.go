@@ -1197,6 +1197,62 @@ func runAppPushImageAPI(cmd *cobra.Command, projectName, imageRef string) error 
 	return nil
 }
 
+// defaultBridgeIP is the host IP on the default libvirt bridge (virbr0).
+// Used for registry image references so the same ref works for both
+// host docker push and VM docker pull.
+const defaultBridgeIP = "192.168.122.1"
+
+// registryHostForPush returns the registry address using the bridge IP.
+// Image references use the bridge IP so VMs can pull them. The push itself
+// is done via localhost (see pushToRegistry).
+func registryHostForPush() string {
+	return defaultBridgeIP + ":" + registryPort()
+}
+
+// registryPort extracts the port from the registry listen address.
+func registryPort() string {
+	port := strings.TrimPrefix(cfg.RegistryAddr, ":")
+	if port == cfg.RegistryAddr {
+		if idx := strings.LastIndex(cfg.RegistryAddr, ":"); idx >= 0 {
+			port = cfg.RegistryAddr[idx+1:]
+		}
+	}
+	return port
+}
+
+// pushToRegistry pushes a local Docker image to the GoShip embedded registry.
+// Images are tagged with the bridge IP for VM pull compatibility, but pushed
+// via localhost (Docker trusts localhost without TLS configuration).
+func pushToRegistry(ctx context.Context, out io.Writer, imageRef string) error {
+	// Re-tag: bridge IP ref -> localhost ref for the push (no TLS needed).
+	port := registryPort()
+	bridgePrefix := defaultBridgeIP + ":" + port + "/"
+	localhostPrefix := "localhost:" + port + "/"
+
+	localRef := strings.Replace(imageRef, bridgePrefix, localhostPrefix, 1)
+
+	// Tag with localhost ref.
+	tagCmd := exec.CommandContext(ctx, "docker", "tag", imageRef, localRef)
+	if output, err := tagCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker tag failed: %w\n%s", err, string(output))
+	}
+
+	fmt.Fprintf(out, "Pushing %s to registry...\n", imageRef)
+
+	// Push via localhost (Docker trusts localhost without insecure-registries).
+	pushCmd := exec.CommandContext(ctx, "docker", "push", localRef)
+	if output, err := pushCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker push failed: %w\n%s", err, string(output))
+	}
+
+	// Clean up the localhost tag.
+	rmiCmd := exec.CommandContext(ctx, "docker", "rmi", localRef)
+	_ = rmiCmd.Run()
+
+	fmt.Fprint(out, "  Image pushed successfully\n")
+	return nil
+}
+
 // pushLocalImage exports a local Docker image, compresses it, and transfers it to the VM.
 //
 //nolint:funlen // Image export and transfer logic requires multiple steps

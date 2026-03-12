@@ -29,7 +29,7 @@ func newIntegrationServer(
 		t.Fatalf("failed to create store: %v", err)
 	}
 	logger := log.New(log.Writer(), "integration: ", 0)
-	srv := apiserver.New(store, rt, logger, nil)
+	srv := apiserver.New(store, rt, logger, nil, nil)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 	cl := client.New(ts.URL)
@@ -668,7 +668,7 @@ func newIntegrationServerWithRoutes(
 	}
 	routes := proxy.NewRouteTable()
 	logger := log.New(log.Writer(), "integration: ", 0)
-	srv := apiserver.New(store, rt, logger, routes)
+	srv := apiserver.New(store, rt, logger, routes, nil)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 	cl := client.New(ts.URL)
@@ -956,7 +956,7 @@ func TestIntegration_ProxyRoutes_RebuildOnStartup(t *testing.T) {
 	// Create server and call RebuildRoutes — simulates startup.
 	routes := proxy.NewRouteTable()
 	logger := log.New(log.Writer(), "rebuild-test: ", 0)
-	srv := apiserver.New(store, rt, logger, routes)
+	srv := apiserver.New(store, rt, logger, routes, nil)
 	srv.RebuildRoutes()
 
 	backend, ok := routes.Lookup("web.rebuild.local")
@@ -996,7 +996,7 @@ func TestIntegration_ProxyRoutes_RebuildSkipsUnavailable(t *testing.T) {
 	routes := proxy.NewRouteTable()
 	logger := log.New(log.Writer(), "rebuild-skip: ", 0)
 	rt := mockrt.New()
-	srv := apiserver.New(store, rt, logger, routes)
+	srv := apiserver.New(store, rt, logger, routes, nil)
 	srv.RebuildRoutes()
 
 	if _, ok := routes.Lookup("hidden.skip.local"); ok {

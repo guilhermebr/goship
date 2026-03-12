@@ -194,7 +194,9 @@ func runDeployDirect(cmd *cobra.Command, m *manifest.Manifest) error {
 			return nil
 		}
 
-		apps, builds, warnings, parseErr := compose.Parse(composeFilePath)
+		registryHost := registryHostForPush()
+		apps, builds, warnings, parseErr := compose.Parse(composeFilePath,
+			compose.WithRegistry(registryHost, m.Project))
 		if parseErr != nil {
 			return fmt.Errorf("failed to parse compose file: %w", parseErr)
 		}
@@ -215,7 +217,7 @@ func runDeployDirect(cmd *cobra.Command, m *manifest.Manifest) error {
 			shouldBuild = *m.Compose.Build
 		}
 
-		// Build and push images.
+		// Build and push images to registry.
 		if shouldBuild && len(builds) > 0 {
 			fmt.Fprintf(out, "\nBuilding %d image(s)...\n\n", len(builds))
 			for svcName, bc := range builds {
@@ -234,11 +236,9 @@ func runDeployDirect(cmd *cobra.Command, m *manifest.Manifest) error {
 				}
 				fmt.Fprint(out, "OK\n")
 
-				fmt.Fprintf(out, "  Pushing %s to VM... ", bc.ImageName)
-				if pushErr := pushLocalImage(ctx, out, instance.ID, bc.ImageName); pushErr != nil {
+				if pushErr := pushToRegistry(ctx, out, bc.ImageName); pushErr != nil {
 					return fmt.Errorf("failed to push image for service %q: %w", svcName, pushErr)
 				}
-				fmt.Fprint(out, "OK\n")
 			}
 			fmt.Fprintln(out)
 		} else if !shouldBuild && len(builds) > 0 {
@@ -408,7 +408,9 @@ func runDeployAPI(cmd *cobra.Command, m *manifest.Manifest) error {
 			return nil
 		}
 
-		apps, builds, warnings, parseErr := compose.Parse(composeFilePath)
+		registryHost := registryHostForPush()
+		apps, builds, warnings, parseErr := compose.Parse(composeFilePath,
+			compose.WithRegistry(registryHost, m.Project))
 		if parseErr != nil {
 			return fmt.Errorf("failed to parse compose file: %w", parseErr)
 		}
@@ -422,7 +424,7 @@ func runDeployAPI(cmd *cobra.Command, m *manifest.Manifest) error {
 			shouldBuild = *m.Compose.Build
 		}
 
-		// Build and push images.
+		// Build and push images to registry.
 		if shouldBuild && len(builds) > 0 {
 			fmt.Fprintf(out, "\nBuilding %d image(s)...\n\n", len(builds))
 			for svcName, bc := range builds {
@@ -440,11 +442,9 @@ func runDeployAPI(cmd *cobra.Command, m *manifest.Manifest) error {
 				}
 				fmt.Fprint(out, "OK\n")
 
-				fmt.Fprintf(out, "  Pushing %s to VM via API... ", bc.ImageName)
-				if pushErr := runAppPushImageAPI(cmd, m.Project, bc.ImageName); pushErr != nil {
+				if pushErr := pushToRegistry(ctx, out, bc.ImageName); pushErr != nil {
 					return fmt.Errorf("failed to push image for service %q: %w", svcName, pushErr)
 				}
-				fmt.Fprint(out, "OK\n")
 			}
 			fmt.Fprintln(out)
 		} else if !shouldBuild && len(builds) > 0 {

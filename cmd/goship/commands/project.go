@@ -392,6 +392,20 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func printDomains(out io.Writer, domains []string, defaultDomain string) {
+	if len(domains) == 0 {
+		return
+	}
+	fmt.Fprint(out, "\nDomains:\n")
+	for _, d := range domains {
+		if d == defaultDomain {
+			fmt.Fprintf(out, "  - %s (default)\n", d)
+		} else {
+			fmt.Fprintf(out, "  - %s\n", d)
+		}
+	}
+}
+
 func runProjectInfo(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
@@ -413,6 +427,8 @@ func runProjectInfo(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(out, "  Memory:   %d MB\n", project.Resources.MemoryMB)
 	fmt.Fprintf(out, "  Disk:     %d MB\n", project.Resources.DiskMB)
 	fmt.Fprintf(out, "  Created:  %s\n", project.CreatedAt.Format(time.RFC3339))
+
+	printDomains(out, project.Domains, project.DefaultDomain)
 
 	// Show environment variables.
 	if len(project.Env) > 0 {
@@ -471,6 +487,8 @@ func runProjectInfoAPI(cmd *cobra.Command, name string) error {
 	fmt.Fprintf(out, "  Memory:   %d MB\n", resp.Resources.MemoryMB)
 	fmt.Fprintf(out, "  Disk:     %d MB\n", resp.Resources.DiskMB)
 	fmt.Fprintf(out, "  Created:  %s\n", resp.CreatedAt.Format(time.RFC3339))
+
+	printDomains(out, resp.Domains, resp.DefaultDomain)
 
 	if resp.Instance != nil {
 		fmt.Fprint(out, "\nVM Instance:\n")

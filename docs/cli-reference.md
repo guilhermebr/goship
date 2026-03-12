@@ -25,6 +25,7 @@ These flags apply to all commands:
 | `GOSHIP_PROXY_ADDR` | `:8081` | Reverse proxy listen address |
 | `GOSHIP_DATA_DIR` | `~/.goship` | Data directory |
 | `GOSHIP_INIT_BINARY_PATH` | `./bin/goship-init` | Path to goship-init binary |
+| `GOSHIP_REGISTRY_ADDR` | `:5000` | Embedded OCI container registry listen address |
 | `GOSHIP_LIBVIRT_URI` | `qemu:///system` | Libvirt connection URI |
 
 ### API Mode
@@ -222,7 +223,7 @@ Alias: `goship project ls`
 
 ### `goship project info <name>`
 
-Shows detailed project information including VM instance details and apps.
+Shows detailed project information including domains, VM instance details, and apps.
 
 ```bash
 goship project info myapp
@@ -239,6 +240,10 @@ Project: myapp
   Memory:   1024 MB
   Disk:     4096 MB
   Created:  2025-01-15T10:30:00Z
+
+Domains:
+  - myapp.local (default)
+  - myapp.dev
 
 VM Instance:
   ID:       e5f6g7h8

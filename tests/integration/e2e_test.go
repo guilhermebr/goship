@@ -169,7 +169,7 @@ func newE2EServer(t *testing.T, prereqs *prereqResult) *e2eServer {
 
 	routes := proxy.NewRouteTable()
 	logger := log.New(os.Stderr, "e2e: ", log.LstdFlags)
-	srv := apiserver.New(store, rt, logger, routes)
+	srv := apiserver.New(store, rt, logger, routes, nil)
 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)

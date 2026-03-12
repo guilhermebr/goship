@@ -168,6 +168,7 @@ func (r *Runtime) CreateInstance(ctx context.Context, project *entities.Project)
 		InitBinaryPath: r.config.InitBinaryPath,
 		ProvisionGuest: r.config.ProvisionGuest,
 		InstallDocker:  r.config.InstallDocker,
+		RegistryAddr:   r.config.RegistryAddr,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM: %w", err)

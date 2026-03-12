@@ -78,7 +78,9 @@ func runComposeUp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no VM instance found for project '%s'", projectName)
 	}
 
-	apps, builds, warnings, err := compose.Parse(composeFile)
+	registryHost := registryHostForPush()
+	apps, builds, warnings, err := compose.Parse(composeFile,
+		compose.WithRegistry(registryHost, projectName))
 	if err != nil {
 		return fmt.Errorf("failed to parse compose file: %w", err)
 	}
@@ -112,11 +114,9 @@ func runComposeUp(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Fprint(out, "OK\n")
 
-			fmt.Fprintf(out, "  Pushing %s to VM... ", bc.ImageName)
-			if err := pushLocalImage(ctx, out, instance.ID, bc.ImageName); err != nil {
+			if err := pushToRegistry(ctx, out, bc.ImageName); err != nil {
 				return fmt.Errorf("failed to push image for service %q: %w", svcName, err)
 			}
-			fmt.Fprint(out, "OK\n")
 		}
 		fmt.Fprintln(out)
 	} else if !composeBuild && len(builds) > 0 {
@@ -291,7 +291,9 @@ func runComposeUpAPI(cmd *cobra.Command, projectName string) error {
 		return err
 	}
 
-	apps, builds, warnings, err := compose.Parse(composeFile)
+	registryHost := registryHostForPush()
+	apps, builds, warnings, err := compose.Parse(composeFile,
+		compose.WithRegistry(registryHost, projectName))
 	if err != nil {
 		return fmt.Errorf("failed to parse compose file: %w", err)
 	}
@@ -318,11 +320,9 @@ func runComposeUpAPI(cmd *cobra.Command, projectName string) error {
 			}
 			fmt.Fprint(out, "OK\n")
 
-			fmt.Fprintf(out, "  Pushing %s to VM via API... ", bc.ImageName)
-			if pushErr := runAppPushImageAPI(cmd, projectName, bc.ImageName); pushErr != nil {
+			if pushErr := pushToRegistry(ctx, out, bc.ImageName); pushErr != nil {
 				return fmt.Errorf("failed to push image for service %q: %w", svcName, pushErr)
 			}
-			fmt.Fprint(out, "OK\n")
 		}
 		fmt.Fprintln(out)
 	} else if !composeBuild && len(builds) > 0 {

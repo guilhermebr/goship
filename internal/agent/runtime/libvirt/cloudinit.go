@@ -14,6 +14,7 @@ type CloudInitConfig struct {
 	Hostname      string
 	SSHKey        string // public key content (not path)
 	InstallDocker bool   // install Docker via cloud-init packages
+	RegistryAddr  string // host registry address for insecure-registries (e.g., "192.168.122.1:5000")
 }
 
 // GenerateCloudInitISO creates a NoCloud ISO at outputPath containing the
@@ -60,6 +61,18 @@ func GenerateCloudInitISO(config *CloudInitConfig, outputPath string) error {
 		// fails to restart ("cannot start docker as networking would not start").
 		userData += "  - [rc-update, add, docker, default]\n"
 		userData += "  - [service, docker, start]\n"
+
+		// Configure insecure registry after Docker is installed and started.
+		// We use runcmd (not write_files) because /etc/docker/ doesn't exist
+		// until the docker package is installed above.
+		if config.RegistryAddr != "" {
+			userData += "  - [mkdir, -p, /etc/docker]\n"
+			// Use the shell string form (not list form) so we can use redirection.
+			userData += fmt.Sprintf(
+				"  - echo '{\"insecure-registries\":[\"%s\"]}' > /etc/docker/daemon.json\n",
+				config.RegistryAddr)
+			userData += "  - [service, docker, restart]\n"
+		}
 	}
 
 	goshipGroups := "wheel"

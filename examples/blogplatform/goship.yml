@@ -1,0 +1,51 @@
+version: "1"
+project: blogplatform
+
+resources:
+  cpu: 4
+  memory: "8G"
+  disk: "40G"
+
+domains:
+  - "blog.example.com"
+  - "api.blog.example.com"
+default_domain: "blog.example.com"
+
+compose:
+  file: docker-compose.yml
+  build: false
+
+env:
+  DB_NAME: "blogdb"
+  DB_USER: "bloguser"
+  CACHE_URL: "redis://cache:6379"
+  LOG_LEVEL: "info"
+
+secrets:
+  DB_PASS: "change-me-in-production"
+  SESSION_KEY: "change-me-session-key"
+
+environments:
+  dev:
+    resources:
+      cpu: 2
+      memory: "4G"
+      disk: "20G"
+    domains:
+      - "blog.dev.local"
+      - "api.blog.dev.local"
+    env:
+      LOG_LEVEL: "debug"
+
+  prod:
+    resources:
+      cpu: 8
+      memory: "16G"
+      disk: "100G"
+    domains:
+      - "blog.example.com"
+      - "api.blog.example.com"
+      - "cdn.blog.example.com"
+    secrets:
+      DB_PASS: "prod-db-password"
+      SESSION_KEY: "prod-session-key"

@@ -19,7 +19,9 @@ import (
 
 // parseConfig holds optional configuration for parsing.
 type parseConfig struct {
-	baseDir string // base directory for resolving relative env_file paths
+	baseDir      string // base directory for resolving relative env_file paths
+	registryAddr string // registry address for qualifying build image names (e.g., "localhost:5000")
+	projectName  string // project name for registry namespace (e.g., "myproject")
 }
 
 // ParseOption configures the compose parser.
@@ -32,10 +34,20 @@ func WithBaseDir(dir string) ParseOption {
 	}
 }
 
+// WithRegistry sets the registry address and project name for generating
+// registry-qualified image names (e.g., "localhost:5000/goship-myproject/web:latest").
+func WithRegistry(addr, projectName string) ParseOption {
+	return func(c *parseConfig) {
+		c.registryAddr = addr
+		c.projectName = projectName
+	}
+}
+
 // Parse reads a docker-compose.yml file and returns a list of AppSpecs, build contexts, and warnings.
 // It automatically resolves env_file paths relative to the compose file's directory.
+// Additional ParseOptions (e.g., WithRegistry) can be passed to customize parsing.
 func Parse(
-	path string,
+	path string, opts ...ParseOption,
 ) (apps []entities.AppSpec, builds map[string]BuildContext, warnings []string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -45,7 +57,9 @@ func Parse(
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to resolve compose file path: %w", err)
 	}
-	return ParseBytes(data, WithBaseDir(filepath.Dir(absPath)))
+	// Prepend WithBaseDir so caller-provided opts can override if needed.
+	allOpts := append([]ParseOption{WithBaseDir(filepath.Dir(absPath))}, opts...)
+	return ParseBytes(data, allOpts...)
 }
 
 // ParseBytes parses docker-compose.yml content and returns a list of AppSpecs, build contexts, and warnings.
@@ -147,7 +161,12 @@ func ParseBytes(
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("service %q: %w", name, err)
 			}
-			bc.ImageName = fmt.Sprintf("goship-%s:latest", name)
+			if cfg.registryAddr != "" && cfg.projectName != "" {
+				bc.ImageName = fmt.Sprintf("%s/goship-%s/%s:latest",
+					cfg.registryAddr, cfg.projectName, name)
+			} else {
+				bc.ImageName = fmt.Sprintf("goship-%s:latest", name)
+			}
 			app.Image = bc.ImageName
 			buildMap[name] = *bc
 		}

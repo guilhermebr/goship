@@ -151,6 +151,13 @@ func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Clean up registry storage for this project's namespace.
+	if s.registry != nil {
+		if regErr := s.registry.CleanupProject(project.Name); regErr != nil {
+			s.logger.Printf("failed to clean up registry for project %s: %v", project.Name, regErr)
+		}
+	}
+
 	if err := s.store.DeleteProject(project.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to delete project: %v", err))
 		return

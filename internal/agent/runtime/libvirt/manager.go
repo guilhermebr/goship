@@ -75,6 +75,7 @@ type CreateVMOptions struct {
 	InitBinaryPath string
 	ProvisionGuest bool
 	InstallDocker  bool
+	RegistryAddr   string // host registry address for VM insecure-registries
 }
 
 // DestroyResult holds the outcome of a Destroy operation.
@@ -186,6 +187,7 @@ func (m *VMManager) Create(opts CreateVMOptions) (*VMInfo, error) {
 			Hostname:      hostname,
 			SSHKey:        opts.SSHKey,
 			InstallDocker: opts.InstallDocker,
+			RegistryAddr:  opts.RegistryAddr,
 		}, isoPath)
 		if isoErr != nil {
 			return nil, fmt.Errorf("failed to create cloud-init ISO: %w", isoErr)

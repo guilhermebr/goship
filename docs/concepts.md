@@ -121,6 +121,28 @@ The proxy listens on a separate port (default `:8081`, configurable via `GOSHIP_
 curl http://web.myapp.local:8081/
 ```
 
+## Embedded Container Registry
+
+GoShip includes an embedded OCI-compliant container registry that starts alongside `goship server` on port `:5000` (configurable via `GOSHIP_REGISTRY_ADDR`). It eliminates the need for external registries when deploying locally-built images.
+
+**How it works:**
+
+- Host pushes images via `localhost:5000` (Docker trusts localhost without TLS)
+- VMs pull images via the host bridge IP (`192.168.122.1:5000`), configured automatically as an insecure registry via cloud-init
+- Layer-level caching means subsequent pushes only transfer changed layers
+- Storage lives at `~/.goship/registry/` with per-project namespaces (`goship-<project>/`)
+- Registry storage is cleaned up automatically when a project is deleted
+
+**Usage with compose:**
+
+```bash
+# Services with build: directives are automatically built, pushed to the registry,
+# and deployed with registry-qualified image names
+goship compose up myproject --build
+```
+
+See [Registry Documentation](registry.md) for details.
+
 ## Nodes
 
 A **node** is a compute host in the GoShip cluster. In Phase 0, there is a single implicit node (the local machine). The node entity lays the groundwork for multi-node scheduling in future phases.
@@ -227,6 +249,8 @@ GoShip stores all its data under `~/.goship/` by default (configurable with `--d
 ├── state.json                  # All project/app state
 ├── images/
 │   └── goship-vm.qcow2        # Base VM image (shared, read-only)
+├── registry/                   # Embedded OCI container registry storage
+│   └── goship-<project>/       # Per-project image namespace
 └── vms/
     └── <project-name>/
         ├── disk.qcow2          # CoW overlay (per-VM writes)
@@ -238,5 +262,6 @@ GoShip stores all its data under `~/.goship/` by default (configurable with `--d
 
 - [Getting Started](getting-started.md) — Install GoShip and deploy your first app
 - [CLI Reference](cli-reference.md) — Complete command reference
+- [Registry](registry.md) — Embedded OCI container registry
 - [Troubleshooting](troubleshooting.md) — Common issues and fixes
 - [Design Document](DESIGN.md) — Full architecture RFC

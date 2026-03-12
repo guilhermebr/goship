@@ -17,4 +17,5 @@ type Config struct {
 	Direct             bool   `conf:"default:false"`
 	ServerAddr         string `conf:"default::8080"`
 	ProxyAddr          string `conf:"default::8081"`
+	RegistryAddr       string `conf:"default::5000"`
 }

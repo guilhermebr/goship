@@ -135,6 +135,8 @@ type RuntimeConfig struct {
 	ProvisionGuest bool
 	// InstallDocker installs Docker inside the VM during provisioning
 	InstallDocker bool
+	// RegistryAddr is the host registry address for VM insecure-registries config (e.g., "192.168.122.1:5000")
+	RegistryAddr string
 	// ProgressWriter, if set, receives boot progress and cloud-init log output
 	ProgressWriter io.Writer
 }
@@ -215,6 +217,11 @@ func WithProvisionGuest(enable bool) RuntimeOption {
 // WithInstallDocker enables or disables Docker installation during provisioning.
 func WithInstallDocker(enable bool) RuntimeOption {
 	return func(c *RuntimeConfig) { c.InstallDocker = enable }
+}
+
+// WithRegistryAddr sets the host registry address for VM insecure-registries configuration.
+func WithRegistryAddr(addr string) RuntimeOption {
+	return func(c *RuntimeConfig) { c.RegistryAddr = addr }
 }
 
 // WithProgressWriter sets a writer for boot progress and cloud-init log output.

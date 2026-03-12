@@ -7,6 +7,7 @@ import (
 
 	"github.com/guilhermebr/goship/internal/agent/runtime"
 	"github.com/guilhermebr/goship/internal/proxy"
+	"github.com/guilhermebr/goship/internal/registry"
 	"github.com/guilhermebr/goship/internal/shared/state"
 )
 
@@ -15,16 +16,24 @@ type Server struct {
 	store       *state.Store
 	rt          runtime.ProjectRuntime
 	proxyRoutes *proxy.RouteTable
+	registry    *registry.Registry
 	mux         *http.ServeMux
 	logger      *log.Logger
 }
 
 // New creates a new API server and registers all routes.
-func New(store *state.Store, rt runtime.ProjectRuntime, logger *log.Logger, routes *proxy.RouteTable) *Server {
+func New(
+	store *state.Store,
+	rt runtime.ProjectRuntime,
+	logger *log.Logger,
+	routes *proxy.RouteTable,
+	reg *registry.Registry,
+) *Server {
 	s := &Server{
 		store:       store,
 		rt:          rt,
 		proxyRoutes: routes,
+		registry:    reg,
 		mux:         http.NewServeMux(),
 		logger:      logger,
 	}

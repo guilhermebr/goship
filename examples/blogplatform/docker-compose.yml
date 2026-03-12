@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${DB_NAME}"
+      POSTGRES_USER: "${DB_USER}"
+      POSTGRES_PASSWORD: "${DB_PASS}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  api:
+    image: blogplatform/api:latest
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?sslmode=disable"
+      CACHE_URL: "${CACHE_URL}"
+      SESSION_KEY: "${SESSION_KEY}"
+      LOG_LEVEL: "${LOG_LEVEL}"
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  worker:
+    image: blogplatform/worker:latest
+    environment:
+      DATABASE_URL: "postgres://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?sslmode=disable"
+      CACHE_URL: "${CACHE_URL}"
+      LOG_LEVEL: "${LOG_LEVEL}"
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  web:
+    image: blogplatform/web:latest
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: "http://api:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
